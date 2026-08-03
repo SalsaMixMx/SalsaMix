@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="theme-color" content="#7A1F1B">
+  <title>Salsa Mix — Mi Ruta</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Pacifico&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div id="shell">
+  <header id="header"></header>
+  <main id="app"></main>
+  <div id="fab-root"></div>
+  <nav class="bottomnav" id="bottomnav"></nav>
+  <div id="modal-root"></div>
+  <div id="toast-root"></div>
+</div>
+  <script>
+    window.firebaseReady = new Promise((resolve, reject) => {
+      window.__resolveFirebaseReady = resolve;
+      window.__rejectFirebaseReady = reject;
+    });
+  </script>
+  <script type="module" src="js/firebase.js"></script>
+  <script src="js/app.js" defer></script>
+</body>
+</html>
