@@ -18,3 +18,37 @@ Las notas con inventario insuficiente se guardan como pedidos pendientes. No gen
 
 ## Usuarios
 Consulta `CONFIGURAR-USUARIOS.md` para activar Firebase Authentication y las reglas de Firestore.
+
+
+## Multiusuario v1
+- Los administradores ven todos los clientes y pueden asignarlos a vendedores.
+- Los vendedores ven clientes, rutas, ventas y adeudos asignados a su cuenta.
+- Los usuarios se siguen creando gratis desde Firebase Authentication.
+- Cada vendedor debe iniciar sesión al menos una vez para que su perfil aparezca en la lista.
+
+> Esta primera fase aplica permisos en la interfaz. Como los datos actuales están guardados en documentos compartidos, el aislamiento fuerte mediante reglas de Firestore se hará en una migración posterior a colecciones individuales.
+
+
+## Vendedores v2
+El administrador dispone de una pestaña Vendedores con clientes, ventas, cobranza, pedidos y rutas por vendedor. En la lista de clientes se muestra el vendedor asignado.
+
+
+## GPS de clientes
+La ubicación se guarda desde la ficha del cliente. Las coordenadas se almacenan internamente, pero no se muestran en pantalla. El botón “Ir al cliente” abre Google Maps. La geolocalización funciona en localhost y en sitios HTTPS como GitHub Pages.
+
+
+## Control de visitas
+Permite iniciar y finalizar visitas, registrar observaciones, ver estados por cliente y consultar un resumen diario de ruta.
+
+
+## Identidad visual y rutas inteligentes
+Incluye logotipo corporativo en el encabezado e inicio de sesión, además de optimización gratuita de recorridos por cercanía.
+
+
+## Identidad visual
+El paquete incluye el logotipo oficial procesado desde el PDF suministrado:
+- `assets/img/logo-header.png`: versión compacta para el encabezado.
+- `assets/img/logo-full.png`: versión completa para el inicio de sesión.
+- `assets/img/logo.png`: copia compatible de la versión compacta.
+
+Los archivos tienen fondo transparente y están recortados para evitar que el logotipo se vea pequeño.

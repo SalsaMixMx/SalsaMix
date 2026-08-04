@@ -208,3 +208,101 @@ nav.bottomnav button{min-width:0;}
 .userbar-name{font-size:11px;font-weight:800;color:var(--paper);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .userbar-role{font-size:9.5px;color:var(--gold);text-transform:uppercase;letter-spacing:.08em;font-weight:800;}
 .logout-btn{background:transparent;border:1px solid rgba(255,255,255,.35);color:var(--paper);border-radius:7px;padding:5px 8px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;}
+
+/* MULTIUSUARIO */
+.userbar-role{text-transform:capitalize;}
+select#f-assigned-to{margin-bottom:2px;}
+
+
+/* VENDEDORES */
+.seller-assignment{font-size:11.5px;color:var(--gold-dark);font-weight:800;margin-top:5px;}
+.seller-profile-card{display:flex;justify-content:space-between;align-items:center;gap:12px;background:var(--cover);color:var(--paper);padding:15px;border-radius:var(--radius);margin:12px 0;}
+.seller-profile-name{font-size:18px;font-weight:900;}
+.seller-profile-card .meta{color:var(--gold);}
+.seller-kpi-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:12px 0;}
+.seller-kpi{background:var(--white);border:1px solid var(--paper-line);border-radius:10px;padding:11px;}
+.seller-kpi span{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-light);font-weight:800;}
+.seller-kpi strong{display:block;font-size:17px;margin-top:4px;}
+.route-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;}
+.route-summary>div{display:flex;justify-content:space-between;background:var(--white);border:1px solid var(--paper-line);border-radius:8px;padding:8px 10px;font-size:12px;}
+.seller-activity-row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px dashed var(--paper-line);font-size:12.5px;}
+.seller-activity-row:last-child{border-bottom:none;}
+.empty.compact{padding:24px 10px;}
+@media(max-width:390px){nav.bottomnav button{font-size:9px;padding-left:1px;padding-right:1px;}nav.bottomnav svg{width:18px;height:18px;}}
+
+
+/* GPS de clientes */
+.location-panel{margin-top:12px;padding:12px;border:1px solid var(--paper-line);border-radius:10px;background:#fff8ea;}
+.location-title{font-weight:800;font-size:14px;}
+.location-state,.location-inline{font-size:11.5px;margin-top:4px;font-weight:700;}
+.location-state.saved,.location-inline.saved{color:var(--green);}
+.location-state.missing,.location-inline.missing{color:var(--ink-light);}
+.route-map-actions{margin-top:-4px;margin-bottom:12px;}
+
+
+/* Control de visitas */
+.visit-summary-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:12px 0;}
+.visit-summary{background:var(--white);border:1px solid var(--paper-line);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:4px;}
+.visit-summary span{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-light);font-weight:700;}
+.visit-summary strong{font-size:17px;}
+.visit-time-card{display:flex;justify-content:space-between;align-items:center;font-size:12px;}
+.visit-time-card strong{font-size:15px;}
+.visit-card.en_visita{border-left:4px solid var(--gold);}
+.visit-card.visitado{border-left:4px solid var(--green);}
+.visit-card.pendiente{border-left:4px solid var(--paper-line);}
+.visit-panel{background:var(--white);border:1px solid var(--paper-line);border-radius:10px;padding:10px;margin-top:10px;}
+@media(max-width:380px){.visit-summary-grid{grid-template-columns:1fr 1fr}.visit-summary strong{font-size:14px;}}
+
+
+/* Logotipo corporativo */
+.brandbar{display:flex;justify-content:center;align-items:center;margin-bottom:10px;min-height:42px;}
+.brand-logo{display:block;width:190px;max-width:75%;max-height:58px;height:auto;object-fit:contain;}
+.auth-brand{display:flex;justify-content:center;align-items:center;}
+.auth-logo{display:block;width:230px;max-width:85%;max-height:90px;height:auto;object-fit:contain;}
+
+/* Rutas inteligentes */
+.smart-progress-card{background:var(--white);border:1px solid var(--paper-line);border-radius:10px;padding:11px 12px;margin:10px 0;font-size:12px;}
+.smart-progress{height:8px;background:#eadcc7;border-radius:999px;overflow:hidden;margin-top:8px;}
+.smart-progress>div{height:100%;background:var(--green);border-radius:999px;transition:width .25s ease;}
+.route-order{display:inline-flex;align-items:center;justify-content:center;width:25px;height:25px;border-radius:50%;background:var(--gold);color:#2b1c05;font-size:12px;font-weight:900;margin-right:7px;vertical-align:middle;}
+
+
+/* Identidad visual SalsaMix - logotipo vectorial exportado */
+.brandbar{
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  margin:0 0 12px;
+  min-height:78px;
+}
+.brand-logo{
+  display:block;
+  width:min(290px,88vw);
+  max-width:92%;
+  max-height:105px;
+  height:auto;
+  object-fit:contain;
+  filter:drop-shadow(0 2px 1px rgba(0,0,0,.12));
+}
+.auth-brand{
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  min-height:150px;
+  padding:8px 0 16px;
+}
+.auth-logo{
+  display:block;
+  width:min(360px,88vw);
+  max-width:92%;
+  max-height:220px;
+  height:auto;
+  object-fit:contain;
+  filter:drop-shadow(0 3px 2px rgba(0,0,0,.14));
+}
+@media(max-width:380px){
+  .brandbar{min-height:66px;}
+  .brand-logo{width:min(245px,86vw);max-height:88px;}
+  .auth-brand{min-height:125px;}
+  .auth-logo{width:min(300px,86vw);max-height:185px;}
+}

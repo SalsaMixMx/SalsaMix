@@ -4,16 +4,21 @@ let notes = [];
 let payments = [];
 let catalog = [];
 let inventoryMovements = [];
+let visits = [];
+let sellers = [];
 let loaded = false;
 let currentUser = null;
 let currentProfile = null;
 let unsubscribeCloud = null;
+let unsubscribeUsers = null;
 
 const state = {
   tab: 'clientes',
   clientDetailId: null,
   routeDay: 'todos',
   search: '',
+  selectedSellerId: null,
+  smartRoute: null, // {day, ids, chunks, currentChunk}
   modal: null, // {type, payload}
 };
 
@@ -55,6 +60,29 @@ function currentActor(){
     userRole: currentProfile ? (currentProfile.role || 'vendedor') : 'vendedor',
   };
 }
+function isAdmin(){ return currentProfile && currentProfile.role === 'admin'; }
+function sellerById(uid){ return sellers.find(s=>s.uid===uid); }
+function sellerName(uid){
+  const seller = sellerById(uid);
+  return seller ? (seller.name || seller.email || 'Vendedor') : 'Sin asignar';
+}
+function visibleClients(){
+  if(isAdmin()) return clients;
+  return clients.filter(c=>c.assignedTo===currentUser?.uid || (!c.assignedTo && c.createdBy===currentUser?.uid));
+}
+function visibleClientIds(){ return new Set(visibleClients().map(c=>c.id)); }
+function visibleNotes(){
+  if(isAdmin()) return notes;
+  const ids=visibleClientIds();
+  return notes.filter(n=>ids.has(n.clientId) || n.createdBy===currentUser?.uid);
+}
+function visiblePayments(){
+  if(isAdmin()) return payments;
+  const ids=visibleClientIds();
+  return payments.filter(p=>ids.has(p.clientId) || p.createdBy===currentUser?.uid);
+}
+function canAccessClient(id){ return isAdmin() || visibleClientIds().has(id); }
+
 function actorFields(prefix='created'){
   const actor = currentActor();
   return {
@@ -75,7 +103,7 @@ function renderAuth(){
   shell.style.display='none';
   root.innerHTML=`<div class="auth-screen">
     <div class="auth-card">
-      <div class="auth-brand"><div class="logo">Salsa<span>mix</span></div></div>
+      <div class="auth-brand"><img src="assets/img/logo-full.png" alt="SalsaMix - Pruébala con todo" class="auth-logo"></div>
       <div class="auth-title">Iniciar sesión</div>
       <div class="auth-subtitle">Accede con la cuenta asignada a tu vendedor.</div>
       <form onsubmit="submitLogin(event)">
@@ -131,6 +159,7 @@ const STORAGE_KEYS = {
   payments: 'payments-data',
   catalog: 'catalog-data',
   inventoryMovements: 'inventory-movements-data',
+  visits: 'visits-data',
 };
 
 async function readLegacyValue(key){
@@ -154,6 +183,7 @@ async function loadAll(){
   try{
     await window.firebaseReady;
     const cloud = await window.firebaseStore.loadAll();
+    sellers = await window.firebaseStore.loadUsers();
     const cloudHasData = Object.values(cloud.exists).some(Boolean);
 
     if(cloudHasData){
@@ -162,13 +192,15 @@ async function loadAll(){
       payments = cloud.payments || [];
       catalog = cloud.catalog || [];
       inventoryMovements = cloud.inventoryMovements || [];
+      visits = cloud.visits || [];
     }else{
       clients = await readLegacyValue(STORAGE_KEYS.clients);
       notes = await readLegacyValue(STORAGE_KEYS.notes);
       payments = await readLegacyValue(STORAGE_KEYS.payments);
       catalog = await readLegacyValue(STORAGE_KEYS.catalog);
       inventoryMovements = await readLegacyValue(STORAGE_KEYS.inventoryMovements);
-      await window.firebaseStore.saveAll({clients, notes, payments, catalog, inventoryMovements});
+      visits = await readLegacyValue(STORAGE_KEYS.visits);
+      await window.firebaseStore.saveAll({clients, notes, payments, catalog, inventoryMovements, visits});
     }
 
     saveLocalBackup(STORAGE_KEYS.clients, clients);
@@ -176,16 +208,20 @@ async function loadAll(){
     saveLocalBackup(STORAGE_KEYS.payments, payments);
     saveLocalBackup(STORAGE_KEYS.catalog, catalog);
     saveLocalBackup(STORAGE_KEYS.inventoryMovements, inventoryMovements);
+    saveLocalBackup(STORAGE_KEYS.visits, visits);
 
     if(unsubscribeCloud) unsubscribeCloud();
+    if(unsubscribeUsers) unsubscribeUsers();
     unsubscribeCloud = window.firebaseStore.subscribe((data)=>{
       if(data.clients) clients = data.clients;
       if(data.notes) notes = data.notes;
       if(data.payments) payments = data.payments;
       if(data.catalog) catalog = data.catalog;
       if(data.inventoryMovements) inventoryMovements = data.inventoryMovements;
+      if(data.visits) visits = data.visits;
       if(loaded) renderApp();
     });
+    unsubscribeUsers = window.firebaseStore.subscribeUsers((profiles)=>{ sellers = profiles; if(loaded) renderApp(); });
   }catch(e){
     console.error(e);
     clients = await readLegacyValue(STORAGE_KEYS.clients);
@@ -193,6 +229,7 @@ async function loadAll(){
     payments = await readLegacyValue(STORAGE_KEYS.payments);
     catalog = await readLegacyValue(STORAGE_KEYS.catalog);
     inventoryMovements = await readLegacyValue(STORAGE_KEYS.inventoryMovements);
+    visits = await readLegacyValue(STORAGE_KEYS.visits);
     showToast('Firebase no respondió; usando respaldo local');
   }
   loaded = true;
@@ -213,6 +250,7 @@ async function saveNotes(){ return saveCollection('notes', notes, STORAGE_KEYS.n
 async function savePayments(){ return saveCollection('payments', payments, STORAGE_KEYS.payments); }
 async function saveCatalog(){ return saveCollection('catalog', catalog, STORAGE_KEYS.catalog); }
 async function saveInventoryMovements(){ return saveCollection('inventoryMovements', inventoryMovements, STORAGE_KEYS.inventoryMovements); }
+async function saveVisits(){ return saveCollection('visits', visits, STORAGE_KEYS.visits); }
 
 function showToast(msg){
   const root = document.getElementById('toast-root');
@@ -305,6 +343,295 @@ function computeEffectiveNoteStatuses(){
   });
   return map;
 }
+
+/* ---------------- GPS DE CLIENTES ---------------- */
+function hasClientLocation(client){
+  return !!(client && Number.isFinite(Number(client.locationLat)) && Number.isFinite(Number(client.locationLng)));
+}
+function clientLocationStatus(client){
+  return hasClientLocation(client) ? 'Ubicación guardada' : 'Sin ubicación registrada';
+}
+function saveClientLocation(clientId){
+  const client = getClient(clientId);
+  if(!client){ showToast('Cliente no encontrado'); return; }
+  if(!navigator.geolocation){ showToast('Este dispositivo no permite obtener ubicación'); return; }
+  showToast('Obteniendo ubicación…');
+  navigator.geolocation.getCurrentPosition(position=>{
+    client.locationLat = Number(position.coords.latitude);
+    client.locationLng = Number(position.coords.longitude);
+    client.locationAccuracy = Math.round(Number(position.coords.accuracy)||0);
+    client.locationUpdatedAt = new Date().toISOString();
+    Object.assign(client, actorFields('updated'));
+    saveClients();
+    renderApp();
+    showToast('Ubicación guardada');
+  }, error=>{
+    const messages = {
+      1:'Debes permitir el acceso a la ubicación',
+      2:'No se pudo obtener la ubicación',
+      3:'La ubicación tardó demasiado; intenta otra vez',
+    };
+    showToast(messages[error.code] || 'No se pudo guardar la ubicación');
+  }, { enableHighAccuracy:true, timeout:15000, maximumAge:0 });
+}
+function getCurrentLocationForRoute(){
+  return new Promise((resolve, reject)=>{
+    if(!navigator.geolocation){ reject(new Error('Geolocalización no disponible')); return; }
+    navigator.geolocation.getCurrentPosition(position=>{
+      resolve({
+        lat: Number(position.coords.latitude),
+        lng: Number(position.coords.longitude),
+      });
+    }, reject, { enableHighAccuracy:true, timeout:15000, maximumAge:0 });
+  });
+}
+async function openClientMap(clientId){
+  const client = getClient(clientId);
+  if(!hasClientLocation(client)){ showToast('Este cliente no tiene ubicación guardada'); return; }
+  const destination = `${Number(client.locationLat)},${Number(client.locationLng)}`;
+  showToast('Obteniendo tu ubicación actual…');
+  let url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving&dir_action=navigate`;
+  try{
+    const current = await getCurrentLocationForRoute();
+    const origin = `${current.lat},${current.lng}`;
+    url += `&origin=${encodeURIComponent(origin)}`;
+  }catch(error){
+    showToast('No se pudo obtener tu ubicación; Google Maps elegirá el punto de inicio');
+  }
+  window.open(url, '_blank', 'noopener');
+}
+function locatedRouteClients(){
+  let list;
+  if(state.routeDay==='todos') list = visibleClients().slice();
+  else if(state.routeDay==='sin') list = visibleClients().filter(c => !c.days || c.days.length===0);
+  else list = visibleClients().filter(c => (c.days||[]).includes(Number(state.routeDay)));
+  return list.filter(hasClientLocation);
+}
+async function openSelectedRouteMap(){
+  const list = locatedRouteClients();
+  if(!list.length){ showToast('No hay clientes con ubicación en esta ruta'); return; }
+  if(list.length===1){ openClientMap(list[0].id); return; }
+  const stops = list.slice(0,10);
+  const destinationClient = stops[stops.length-1];
+  const destination = `${Number(destinationClient.locationLat)},${Number(destinationClient.locationLng)}`;
+  const waypoints = stops.slice(0,-1).map(c=>`${Number(c.locationLat)},${Number(c.locationLng)}`).join('|');
+  showToast('Obteniendo tu ubicación actual…');
+  let url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving&dir_action=navigate`;
+  if(waypoints) url += `&waypoints=${encodeURIComponent(waypoints)}`;
+  try{
+    const current = await getCurrentLocationForRoute();
+    const origin = `${current.lat},${current.lng}`;
+    url += `&origin=${encodeURIComponent(origin)}`;
+  }catch(error){
+    showToast('No se pudo obtener tu ubicación; Google Maps elegirá el punto de inicio');
+  }
+  window.open(url, '_blank', 'noopener');
+}
+
+/* ---------------- RUTAS INTELIGENTES ---------------- */
+function selectedRouteClients(){
+  let list;
+  if(state.routeDay==='todos') list=visibleClients().slice();
+  else if(state.routeDay==='sin') list=visibleClients().filter(c=>!c.days || c.days.length===0);
+  else list=visibleClients().filter(c=>(c.days||[]).includes(Number(state.routeDay)));
+  return list;
+}
+function distanceKm(aLat,aLng,bLat,bLng){
+  const toRad=value=>value*Math.PI/180;
+  const earth=6371;
+  const dLat=toRad(bLat-aLat), dLng=toRad(bLng-aLng);
+  const x=Math.sin(dLat/2)**2 + Math.cos(toRad(aLat))*Math.cos(toRad(bLat))*Math.sin(dLng/2)**2;
+  return earth*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
+}
+function nearestNeighborOrder(clients,start){
+  const remaining=clients.slice();
+  const ordered=[];
+  let current={lat:start.lat,lng:start.lng};
+  while(remaining.length){
+    let bestIndex=0, bestDistance=Infinity;
+    remaining.forEach((client,index)=>{
+      const distance=distanceKm(current.lat,current.lng,Number(client.locationLat),Number(client.locationLng));
+      if(distance<bestDistance){bestDistance=distance;bestIndex=index;}
+    });
+    const next=remaining.splice(bestIndex,1)[0];
+    ordered.push(next);
+    current={lat:Number(next.locationLat),lng:Number(next.locationLng)};
+  }
+  return ordered;
+}
+function buildRouteChunks(clients,size=4){
+  const chunks=[];
+  for(let i=0;i<clients.length;i+=size) chunks.push(clients.slice(i,i+size).map(c=>c.id));
+  return chunks;
+}
+async function optimizeSelectedRoute(){
+  const eligible=selectedRouteClients().filter(c=>hasClientLocation(c) && clientVisitStatus(c.id).key!=='visitado');
+  if(!eligible.length){showToast('No hay clientes pendientes con ubicación guardada');return;}
+  showToast('Obteniendo tu ubicación y ordenando la ruta…');
+  try{
+    const current=await getCurrentLocationForRoute();
+    const ordered=nearestNeighborOrder(eligible,current);
+    state.smartRoute={day:state.routeDay,ids:ordered.map(c=>c.id),chunks:buildRouteChunks(ordered),currentChunk:0,origin:current};
+    document.getElementById('app').innerHTML=renderRutasTab();
+    showToast('Recorrido optimizado');
+  }catch(error){showToast('No se pudo obtener tu ubicación actual');}
+}
+function clearSmartRoute(){state.smartRoute=null;document.getElementById('app').innerHTML=renderRutasTab();}
+function smartRouteClients(){
+  if(!state.smartRoute || state.smartRoute.day!==state.routeDay) return [];
+  return state.smartRoute.ids.map(id=>getClient(id)).filter(Boolean).filter(c=>clientVisitStatus(c.id).key!=='visitado');
+}
+async function openSmartRouteChunk(index){
+  const route=state.smartRoute;
+  if(!route || !route.chunks[index]){showToast('No hay otra parte de la ruta');return;}
+  const clients=route.chunks[index].map(id=>getClient(id)).filter(c=>hasClientLocation(c) && clientVisitStatus(c.id).key!=='visitado');
+  if(!clients.length){showToast('Esta parte de la ruta ya fue completada');return;}
+  const destinationClient=clients[clients.length-1];
+  const destination=`${Number(destinationClient.locationLat)},${Number(destinationClient.locationLng)}`;
+  const waypoints=clients.slice(0,-1).map(c=>`${Number(c.locationLat)},${Number(c.locationLng)}`).join('|');
+  let url=`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving&dir_action=navigate`;
+  if(waypoints) url+=`&waypoints=${encodeURIComponent(waypoints)}`;
+  try{
+    const current=await getCurrentLocationForRoute();
+    url+=`&origin=${encodeURIComponent(`${current.lat},${current.lng}`)}`;
+  }catch(error){}
+  route.currentChunk=index;
+  window.open(url,'_blank','noopener');
+}
+function openCurrentSmartRoute(){openSmartRouteChunk(state.smartRoute?.currentChunk||0);}
+function openNextSmartRoute(){
+  if(!state.smartRoute){showToast('Primero optimiza el recorrido');return;}
+  const next=(state.smartRoute.currentChunk||0)+1;
+  if(next>=state.smartRoute.chunks.length){showToast('No hay otra parte de la ruta');return;}
+  openSmartRouteChunk(next);
+}
+
+/* ---------------- CONTROL DE VISITAS ---------------- */
+function visitSellerMatches(visit){
+  return isAdmin() || visit.sellerId===currentUser?.uid;
+}
+function visitsForClient(clientId){
+  return visits.filter(v=>v.clientId===clientId && visitSellerMatches(v));
+}
+function todayVisitForClient(clientId){
+  const today=todayISO();
+  return visitsForClient(clientId)
+    .filter(v=>v.date===today)
+    .sort((a,b)=>(b.startedAt||'').localeCompare(a.startedAt||''))[0] || null;
+}
+function activeVisitForCurrentUser(){
+  return visits.find(v=>v.status==='en_visita' && v.sellerId===currentUser?.uid) || null;
+}
+function clientVisitStatus(clientId){
+  const visit=todayVisitForClient(clientId);
+  if(!visit) return {key:'pendiente',label:'Pendiente',icon:'⚪'};
+  if(visit.status==='en_visita') return {key:'en_visita',label:'En visita',icon:'🟡'};
+  return {key:'visitado',label:'Visitado',icon:'🟢'};
+}
+function formatClock(iso){
+  if(!iso) return '';
+  return new Date(iso).toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'});
+}
+function visitDurationMinutes(visit){
+  if(!visit?.startedAt) return 0;
+  const end=visit.endedAt ? new Date(visit.endedAt) : new Date();
+  return Math.max(0,Math.round((end-new Date(visit.startedAt))/60000));
+}
+function formatMinutes(total){
+  total=Math.max(0,Number(total)||0);
+  const h=Math.floor(total/60), m=total%60;
+  return h ? `${h} h ${m} min` : `${m} min`;
+}
+async function startVisit(clientId){
+  const client=getClient(clientId);
+  if(!client){ showToast('Cliente no encontrado'); return; }
+  const existing=todayVisitForClient(clientId);
+  if(existing?.status==='en_visita'){ showToast('La visita ya está iniciada'); return; }
+  const other=activeVisitForCurrentUser();
+  if(other && other.clientId!==clientId){
+    const otherClient=getClient(other.clientId);
+    showToast(`Finaliza primero la visita de ${otherClient?.name||'otro cliente'}`);
+    return;
+  }
+  const visit={
+    id:uid(), clientId, date:todayISO(), status:'en_visita',
+    startedAt:new Date().toISOString(), endedAt:null, observations:'',
+    sellerId:currentUser?.uid||null, sellerName:currentProfile?.name||currentUser?.email||'Usuario',
+    ...actorFields('created')
+  };
+  try{
+    const location=await getCurrentLocationForRoute();
+    visit.startLocation={lat:location.lat,lng:location.lng};
+  }catch(error){}
+  visits.push(visit);
+  saveVisits(); renderApp(); showToast('Visita iniciada');
+}
+function openFinishVisit(clientId){
+  const visit=todayVisitForClient(clientId);
+  if(!visit || visit.status!=='en_visita'){ showToast('No hay una visita activa'); return; }
+  openModal('visitFinish',{visitId:visit.id,observations:visit.observations||''});
+}
+function modalVisitFinish(){
+  const p=state.modal.payload;
+  const visit=visits.find(v=>v.id===p.visitId);
+  const client=visit?getClient(visit.clientId):null;
+  if(!visit) return `<div class="empty">Visita no encontrada.</div>`;
+  return `<div class="modal-title"><span>Finalizar visita</span><button onclick="closeModal()">✕</button></div>
+    <div class="card"><div class="name">${esc(client?.name||'Cliente')}</div><div class="meta">Inicio: ${formatClock(visit.startedAt)} · ${formatMinutes(visitDurationMinutes(visit))}</div></div>
+    <label>Observaciones</label><textarea id="visit-observations" placeholder="Ej. Cliente cerrado, realizó pedido, próxima visita…">${esc(p.observations||'')}</textarea>
+    <div class="btnrow"><button class="btn btn-primary btn-block" onclick="submitFinishVisit()">Finalizar visita</button></div>`;
+}
+async function submitFinishVisit(){
+  const visit=visits.find(v=>v.id===state.modal.payload.visitId);
+  if(!visit) return;
+  visit.status='visitado';
+  visit.endedAt=new Date().toISOString();
+  visit.observations=(document.getElementById('visit-observations')?.value||'').trim();
+  try{
+    const location=await getCurrentLocationForRoute();
+    visit.endLocation={lat:location.lat,lng:location.lng};
+  }catch(error){}
+  Object.assign(visit,actorFields('updated'));
+  saveVisits(); closeModal(); renderApp(); showToast('Visita finalizada');
+}
+function routeVisitSummary(list){
+  const today=todayISO();
+  const ids=new Set(list.map(c=>c.id));
+  const dayVisits=visits.filter(v=>v.date===today && ids.has(v.clientId) && visitSellerMatches(v));
+  const visitedIds=new Set(dayVisits.filter(v=>v.status==='visitado').map(v=>v.clientId));
+  const activeIds=new Set(dayVisits.filter(v=>v.status==='en_visita').map(v=>v.clientId));
+  const delivered=visibleNotes().filter(n=>n.date===today && ids.has(n.clientId) && isDeliveredNote(n));
+  const dayPayments=visiblePayments().filter(p=>p.date===today && ids.has(p.clientId));
+  return {
+    scheduled:list.length,
+    visited:visitedIds.size,
+    active:activeIds.size,
+    pending:Math.max(0,list.length-visitedIds.size-activeIds.size),
+    sales:delivered.reduce((s,n)=>s+(Number(n.total)||0),0),
+    collections:dayPayments.reduce((s,p)=>s+(Number(p.amount)||0),0),
+    minutes:dayVisits.filter(v=>v.status==='visitado').reduce((s,v)=>s+visitDurationMinutes(v),0),
+  };
+}
+function visitStatusBadge(clientId){
+  const status=clientVisitStatus(clientId);
+  const styles={pendiente:'background:#EEE7DA;color:var(--ink-light);',en_visita:'background:#F8E8C7;color:var(--gold-dark);',visitado:'background:var(--green-bg);color:var(--green);'};
+  return `<span class="badge" style="${styles[status.key]}">${status.icon} ${status.label}</span>`;
+}
+function visitActionButtons(clientId){
+  const status=clientVisitStatus(clientId);
+  if(status.key==='en_visita') return `<button class="btn btn-primary btn-sm" onclick="openFinishVisit('${clientId}')">Finalizar visita</button>`;
+  if(status.key==='visitado') return `<span class="badge" style="background:var(--green-bg);color:var(--green);padding:7px 10px;">🟢 Visitado hoy</span>`;
+  return `<button class="btn btn-primary btn-sm" onclick="startVisit('${clientId}')">Iniciar visita</button>`;
+}
+function modalVisitPrompt(){
+  const p=state.modal.payload;
+  const client=getClient(p.clientId);
+  return `<div class="modal-title"><span>Registrar visita</span><button onclick="leaveClientWithoutVisit()">✕</button></div>
+    <div style="font-size:14px;line-height:1.5;">¿Deseas iniciar una visita a <strong>${esc(client?.name||'este cliente')}</strong> antes de salir?</div>
+    <div class="btnrow"><button class="btn btn-outline btn-block" onclick="leaveClientWithoutVisit()">Salir sin registrar</button><button class="btn btn-primary btn-block" onclick="startVisitFromPrompt('${p.clientId}')">Iniciar visita</button></div>`;
+}
+function leaveClientWithoutVisit(){ state.modal=null; state.clientDetailId=null; renderModal(); renderApp(); }
+function startVisitFromPrompt(clientId){ state.modal=null; startVisit(clientId); }
 
 /* Cuántas unidades y cuánto se ha vendido de cada producto/categoría, usando todas las notas. */
 function computeProductStats(){
@@ -442,6 +769,7 @@ const ICONS = {
   adeudos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5c0-1.4 1.2-2 2.5-2s2.5.7 2.5 2c0 3-5 1.7-5 4.7 0 1.3 1.2 2.3 2.5 2.3s2.5-.7 2.5-2"/></svg>',
   reportes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
   inventario: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7l8-4 8 4-8 4-8-4z"/><path d="M4 7v10l8 4 8-4V7"/><path d="M12 11v10"/></svg>',
+  vendedores: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.4"/><path d="M3 20c.8-4 3.2-6 6-6s5.2 2 6 6"/><path d="M15 15c2.5.2 4.3 1.8 5 5"/></svg>',
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
   phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 4h3l1.5 4-2 1.5a12 12 0 0 0 5.5 5.5l1.5-2 4 1.5v3c0 1-1 2-2 2-8 0-14-6-14-14 0-1 1-2 2-2z"/></svg>',
@@ -450,7 +778,7 @@ const ICONS = {
 /* ---------------- RENDER: HEADER ---------------- */
 function renderHeader(){
   const el = document.getElementById('header');
-  const brandBar = `<div class="brandbar"><div class="brand-word"><span class="brand-salsa">Salsa</span><span class="brand-mixword">mix</span></div></div>`;
+  const brandBar = `<div class="brandbar"><img src="assets/img/logo-header.png" alt="SalsaMix" class="brand-logo"></div>`;
   if(state.clientDetailId){
     const c = getClient(state.clientDetailId);
     el.innerHTML = `
@@ -463,7 +791,7 @@ function renderHeader(){
       </div>`;
     return;
   }
-  const titles = { clientes:'Mi Ruta', rutas:'Rutas de la semana', ventas:'Notas de venta', adeudos:'Adeudos', reportes:'Ventas por producto', inventario:'Inventario' };
+  const titles = { clientes:'Mi Ruta', rutas:'Rutas de la semana', ventas:'Notas de venta', adeudos:'Adeudos', reportes:'Ventas por producto', inventario:'Inventario', vendedores:'Vendedores' };
   const userName = currentProfile ? (currentProfile.name || currentProfile.email || 'Usuario') : 'Usuario';
   const userRole = currentProfile ? (currentProfile.role || 'vendedor') : 'vendedor';
   el.innerHTML = `
@@ -477,7 +805,9 @@ function renderHeader(){
 /* ---------------- RENDER: BOTTOM NAV ---------------- */
 function renderBottomNav(){
   const el = document.getElementById('bottomnav');
-  const tabs = [['clientes','Clientes'],['rutas','Rutas'],['ventas','Ventas'],['adeudos','Adeudos'],['reportes','Productos'],['inventario','Inventario']];
+  const tabs = isAdmin()
+    ? [['clientes','Clientes'],['vendedores','Vendedores'],['rutas','Rutas'],['ventas','Ventas'],['adeudos','Adeudos'],['reportes','Productos'],['inventario','Inventario']]
+    : [['clientes','Clientes'],['rutas','Rutas'],['ventas','Ventas'],['adeudos','Adeudos']];
   el.innerHTML = tabs.map(([key,label])=>`
     <button class="${state.tab===key?'active':''}" onclick="setTab('${key}')">
       ${ICONS[key]}<span>${label}</span>
@@ -510,30 +840,45 @@ function renderApp(){
   else if(state.tab==='adeudos') el.innerHTML = renderAdeudosTab();
   else if(state.tab==='reportes') el.innerHTML = renderReportesTab();
   else if(state.tab==='inventario') el.innerHTML = renderInventarioTab();
+  else if(state.tab==='vendedores') el.innerHTML = renderVendedoresTab();
 }
 
-function setTab(tab){ state.tab = tab; state.clientDetailId = null; renderApp(); }
-function goBack(){ state.clientDetailId = null; renderApp(); }
+function setTab(tab){
+  if(!isAdmin() && ['reportes','inventario','vendedores'].includes(tab)){ showToast('Solo el administrador puede entrar'); return; }
+  state.tab = tab; state.clientDetailId = null; renderApp();
+}
+function goBack(){
+  const clientId=state.clientDetailId;
+  if(clientId && state.tab==='rutas' && clientVisitStatus(clientId).key==='pendiente'){
+    openModal('visitPrompt',{clientId});
+    return;
+  }
+  state.clientDetailId = null; renderApp();
+}
 function onSearchInput(v){ state.search = v; document.getElementById('app').innerHTML = renderClientesTab(); }
 
 /* --- Clientes tab --- */
 function renderClientesTab(){
   const q = state.search.trim().toLowerCase();
-  let list = clients.slice().sort((a,b)=>a.name.localeCompare(b.name));
+  let list = visibleClients().slice().sort((a,b)=>a.name.localeCompare(b.name));
   if(q) list = list.filter(c => c.name.toLowerCase().includes(q) || (c.zone||'').toLowerCase().includes(q));
-  if(clients.length===0){
-    return `<div class="empty"><span class="big">📒</span>Aún no tienes clientes.<br>Toca el botón + para agregar el primero.</div>`;
+  if(visibleClients().length===0){
+    const adminTools = isAdmin() ? `<div class="btnrow" style="margin-bottom:10px;"><button class="btn btn-outline btn-sm" onclick="openModal('usersManage',{})">👥 Vendedores</button></div>` : '';
+    return adminTools + `<div class="empty"><span class="big">📒</span>Aún no tienes clientes.<br>Toca el botón + para agregar el primero.</div>`;
   }
   if(list.length===0){
     return `<div class="empty">No hay clientes que coincidan con "${esc(state.search)}".</div>`;
   }
-  return list.map(c=>{
+  const adminTools = isAdmin() ? `<div class="btnrow" style="margin-bottom:10px;"><button class="btn btn-outline btn-sm" onclick="openModal('usersManage',{})">👥 Vendedores (${sellers.filter(s=>s.role==='vendedor').length})</button></div>` : '';
+  return adminTools + list.map(c=>{
     const bal = balanceFor(c.id);
     return `<div class="card tap" onclick="openClientDetail('${c.id}')">
       <div class="row-between">
         <div>
           <div class="name">${esc(c.name)}</div>
           <div class="meta">${c.zone?`<span class="badge zone">${esc(c.zone)}</span> `:''}${c.discount>0?`<span class="badge discount">-${c.discount}%</span> `:''}${esc(c.phone||'')}</div>
+          <div class="location-inline ${hasClientLocation(c)?'saved':'missing'}">📍 ${clientLocationStatus(c)}</div>
+          ${isAdmin()?`<div class="seller-assignment">👤 ${esc(sellerName(c.assignedTo))}</div>`:''}
         </div>
         <div class="balance mono ${bal>0.004?'owed':'clear'}">${bal>0.004? fmt(bal) : 'Al día'}</div>
       </div>
@@ -541,79 +886,166 @@ function renderClientesTab(){
   }).join('');
 }
 
+/* --- Vendedores tab (administrador) --- */
+function sellerClients(sellerId){
+  return clients.filter(c=>c.assignedTo===sellerId);
+}
+function sellerNotes(sellerId){
+  const clientIds = new Set(sellerClients(sellerId).map(c=>c.id));
+  return notes.filter(n=>clientIds.has(n.clientId) || n.createdBy===sellerId);
+}
+function sellerPayments(sellerId){
+  const clientIds = new Set(sellerClients(sellerId).map(c=>c.id));
+  return payments.filter(p=>clientIds.has(p.clientId) || p.createdBy===sellerId);
+}
+function selectSeller(sellerId){
+  state.selectedSellerId = sellerId;
+  document.getElementById('app').innerHTML = renderVendedoresTab();
+}
+function clearSelectedSeller(){
+  state.selectedSellerId = null;
+  document.getElementById('app').innerHTML = renderVendedoresTab();
+}
+function renderVendedoresTab(){
+  if(!isAdmin()) return `<div class="empty">Solo el administrador puede consultar vendedores.</div>`;
+
+  const vendorList = sellers.filter(s=>s.role==='vendedor').slice()
+    .sort((a,b)=>(a.name||a.email||'').localeCompare(b.name||b.email||''));
+
+  if(state.selectedSellerId){
+    const seller = sellerById(state.selectedSellerId);
+    if(!seller){ state.selectedSellerId=null; return renderVendedoresTab(); }
+    const assigned = sellerClients(seller.uid).slice().sort((a,b)=>a.name.localeCompare(b.name));
+    const sellerSales = sellerNotes(seller.uid).slice().sort((a,b)=>b.date.localeCompare(a.date));
+    const deliveredSales = sellerSales.filter(isDeliveredNote);
+    const pendingOrders = sellerSales.filter(n=>n.fulfillmentStatus==='pedido');
+    const sellerCollected = sellerPayments(seller.uid).reduce((sum,p)=>sum+(Number(p.amount)||0),0)
+      + deliveredSales.reduce((sum,n)=>sum+(Number(n.paid)||0),0);
+    const salesTotal = deliveredSales.reduce((sum,n)=>sum+(Number(n.total)||0),0);
+    const routeCounts = DAY_LABELS.map((day,index)=>({day,count:assigned.filter(c=>(c.days||[]).includes(index)).length}));
+
+    const clientsHtml = assigned.length ? assigned.map(c=>{
+      const bal=balanceFor(c.id);
+      return `<div class="card tap" onclick="openClientDetail('${c.id}')">
+        <div class="row-between"><div><div class="name">${esc(c.name)}</div><div class="meta">${esc(c.address||c.zone||'Sin dirección')}</div></div>
+        <div class="balance mono ${bal>0.004?'owed':'clear'}">${bal>0.004?fmt(bal):'Al día'}</div></div>
+      </div>`;
+    }).join('') : `<div class="empty compact">Este vendedor todavía no tiene clientes asignados.</div>`;
+
+    const salesHtml = sellerSales.length ? sellerSales.slice(0,10).map(n=>{
+      const c=getClient(n.clientId);
+      const pending=n.fulfillmentStatus==='pedido';
+      return `<div class="seller-activity-row"><div><strong>${esc(c?.name||'Cliente eliminado')}</strong><div class="meta">${fmtDate(n.date)} · ${pending?'Pedido pendiente':'Venta'}</div></div><div class="mono">${fmt(n.total)}</div></div>`;
+    }).join('') : `<div class="meta">Sin ventas ni pedidos registrados.</div>`;
+
+    return `<button class="btn btn-outline btn-sm" onclick="clearSelectedSeller()">← Todos los vendedores</button>
+      <div class="seller-profile-card">
+        <div><div class="seller-profile-name">${esc(seller.name||'Sin nombre')}</div><div class="meta">${esc(seller.email||'')}</div></div>
+        <span class="badge" style="background:${seller.active===false?'var(--red-bg)':'var(--green-bg)'};color:${seller.active===false?'var(--red)':'var(--green)'}">${seller.active===false?'Inactivo':'Activo'}</span>
+      </div>
+      <div class="seller-kpi-grid">
+        <div class="seller-kpi"><span>Clientes</span><strong>${assigned.length}</strong></div>
+        <div class="seller-kpi"><span>Ventas</span><strong>${fmt(salesTotal)}</strong></div>
+        <div class="seller-kpi"><span>Cobrado</span><strong>${fmt(sellerCollected)}</strong></div>
+        <div class="seller-kpi"><span>Pedidos</span><strong>${pendingOrders.length}</strong></div>
+      </div>
+      <div class="section-title">Rutas asignadas</div>
+      <div class="route-summary">${routeCounts.map(r=>`<div><span>${r.day}</span><strong>${r.count}</strong></div>`).join('')}</div>
+      <div class="section-title">Clientes de ${esc(seller.name||seller.email||'vendedor')}</div>
+      ${clientsHtml}
+      <div class="section-title">Últimas ventas y pedidos</div>
+      <div class="card">${salesHtml}</div>`;
+  }
+
+  if(!vendorList.length){
+    return `<div class="empty"><span class="big">👥</span>No hay vendedores disponibles.<br>Deben iniciar sesión una vez para aparecer aquí.</div>`;
+  }
+
+  const totalClientsAssigned=clients.filter(c=>c.assignedTo).length;
+  const summary=`<div class="seller-kpi-grid">
+    <div class="seller-kpi"><span>Vendedores</span><strong>${vendorList.length}</strong></div>
+    <div class="seller-kpi"><span>Clientes asignados</span><strong>${totalClientsAssigned}</strong></div>
+  </div>`;
+
+  return summary + `<div class="section-title">Selecciona un vendedor</div>` + vendorList.map(s=>{
+    const assigned=sellerClients(s.uid);
+    const delivered=sellerNotes(s.uid).filter(isDeliveredNote);
+    const total=delivered.reduce((sum,n)=>sum+(Number(n.total)||0),0);
+    return `<div class="card tap" onclick="selectSeller('${s.uid}')">
+      <div class="row-between">
+        <div><div class="name">${esc(s.name||'Sin nombre')}</div><div class="meta">${esc(s.email||'')} · ${assigned.length} cliente(s)</div></div>
+        <div style="text-align:right"><div class="mono" style="font-weight:800">${fmt(total)}</div><div class="meta">ventas</div></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
 /* --- Rutas tab --- */
 function renderRutasTab(){
-  if(state.routeDay==='todos' && mondayIndexToday()>=0 && state._routeDaySet!==true){
-    // default to today's day the first time
-  }
-  const chips = [['todos','Todos'], ...DAY_SHORT.map((s,i)=>[String(i), DAY_LABELS[i]]), ['sin','Sin día']];
-  const stripHTML = `<div class="daystrip">${chips.map(([key,label])=>`
+  const chips=[['todos','Todos'],...DAY_SHORT.map((s,i)=>[String(i),DAY_LABELS[i]]),['sin','Sin día']];
+  const smartActive=!!(state.smartRoute && state.smartRoute.day===state.routeDay);
+  const stripHTML=`<div class="daystrip">${chips.map(([key,label])=>`
     <div class="daychip ${state.routeDay===key?'active':''}" onclick="setRouteDay('${key}')">${label==='Todos'||label==='Sin día'?label:DAY_SHORT[Number(key)]}</div>
-  `).join('')}</div>`;
+  `).join('')}</div>
+  <div class="btnrow route-map-actions">
+    <button class="btn btn-primary btn-sm" onclick="optimizeSelectedRoute()">✨ Optimizar recorrido</button>
+    ${smartActive?`<button class="btn btn-gold btn-sm" onclick="openCurrentSmartRoute()">🗺 Abrir recorrido</button>${state.smartRoute.chunks.length>1?`<button class="btn btn-outline btn-sm" onclick="openNextSmartRoute()">➡️ Siguiente parte</button>`:''}<button class="btn btn-outline btn-sm" onclick="clearSmartRoute()">Restablecer</button>`:`<button class="btn btn-outline btn-sm" onclick="openSelectedRouteMap()">🗺 Abrir ruta normal</button>`}
+  </div>`;
 
-  let list;
-  if(state.routeDay==='todos') list = clients.slice();
-  else if(state.routeDay==='sin') list = clients.filter(c => !c.days || c.days.length===0);
-  else list = clients.filter(c => (c.days||[]).includes(Number(state.routeDay)));
+  let list=selectedRouteClients();
+  const smartList=smartRouteClients();
+  if(smartActive){
+    const smartIds=new Set(smartList.map(c=>c.id));
+    const withoutGps=list.filter(c=>!smartIds.has(c.id) && clientVisitStatus(c.id).key!=='visitado');
+    const visited=list.filter(c=>clientVisitStatus(c.id).key==='visitado');
+    list=[...smartList,...withoutGps,...visited];
+  }else list=list.sort((a,b)=>a.name.localeCompare(b.name));
 
-  list = list.sort((a,b)=>a.name.localeCompare(b.name));
+  const summary=routeVisitSummary(selectedRouteClients());
+  const percent=summary.scheduled?Math.round((summary.visited/summary.scheduled)*100):0;
+  const summaryHTML=`<div class="smart-progress-card">
+    <div class="row-between"><strong>Progreso de la ruta</strong><span>${summary.visited} de ${summary.scheduled} · ${percent}%</span></div>
+    <div class="smart-progress"><div style="width:${percent}%"></div></div>
+  </div><div class="visit-summary-grid">
+    <div class="visit-summary"><span>Programados</span><strong>${summary.scheduled}</strong></div>
+    <div class="visit-summary"><span>Visitados</span><strong>${summary.visited}</strong></div>
+    <div class="visit-summary"><span>Pendientes</span><strong>${summary.pending}</strong></div>
+    <div class="visit-summary"><span>En visita</span><strong>${summary.active}</strong></div>
+    <div class="visit-summary"><span>Ventas hoy</span><strong class="mono">${fmt(summary.sales)}</strong></div>
+    <div class="visit-summary"><span>Cobrado hoy</span><strong class="mono">${fmt(summary.collections)}</strong></div>
+  </div><div class="card visit-time-card"><span>Tiempo en visitas hoy</span><strong>${formatMinutes(summary.minutes)}</strong></div>`;
 
-  if(clients.length===0){
-    return stripHTML + `<div class="empty"><span class="big">🗺️</span>Agrega clientes y asígnales días de ruta desde su ficha.</div>`;
-  }
-  if(list.length===0){
-    return stripHTML + `<div class="empty">Nadie asignado a este día todavía.</div>`;
-  }
-  const rows = list.map(c=>{
-    const bal = balanceFor(c.id);
-    return `<div class="card">
+  if(visibleClients().length===0) return stripHTML+summaryHTML+`<div class="empty"><span class="big">🗺️</span>Agrega clientes y asígnales días de ruta desde su ficha.</div>`;
+  if(list.length===0) return stripHTML+summaryHTML+`<div class="empty">Nadie asignado a este día todavía.</div>`;
+
+  const smartPositions=new Map(smartList.map((c,index)=>[c.id,index+1]));
+  const rows=list.map(c=>{
+    const bal=balanceFor(c.id);
+    const position=smartPositions.get(c.id);
+    const noGps=!hasClientLocation(c);
+    return `<div class="card visit-card ${clientVisitStatus(c.id).key}">
       <div class="row-between">
         <div class="tap" style="flex:1" onclick="openClientDetail('${c.id}')">
-          <div class="name">${esc(c.name)}</div>
+          <div class="name">${position?`<span class="route-order">${position}</span>`:''}${esc(c.name)} ${visitStatusBadge(c.id)}</div>
           <div class="meta">${esc(c.address||c.zone||'')}</div>
+          <div class="location-inline ${hasClientLocation(c)?'saved':'missing'}">📍 ${clientLocationStatus(c)}${smartActive&&noGps?' · No incluido en optimización':''}</div>
         </div>
-        <div class="balance mono ${bal>0.004?'owed':'clear'}" style="font-size:13px;">${bal>0.004? fmt(bal):'Al día'}</div>
+        <div class="balance mono ${bal>0.004?'owed':'clear'}" style="font-size:13px;">${bal>0.004?fmt(bal):'Al día'}</div>
       </div>
       <div class="btnrow">
         ${c.phone?`<a href="tel:${esc(c.phone)}" class="btn btn-outline btn-sm">${ICONS.phone} Llamar</a>`:''}
-        <button class="btn btn-gold btn-sm" onclick="openNoteForm('${c.id}')">+ Nota de venta</button>
+        ${hasClientLocation(c)?`<button class="btn btn-outline btn-sm" onclick="openClientMap('${c.id}')">🗺 Ir</button>`:''}
+        ${visitActionButtons(c.id)}
+        <button class="btn btn-gold btn-sm" onclick="openNoteForm('${c.id}')">+ Nota</button>
       </div>
     </div>`;
   }).join('');
-  return stripHTML + rows;
+  return stripHTML+summaryHTML+rows;
 }
-function setRouteDay(day){ state.routeDay = day; document.getElementById('app').innerHTML = renderRutasTab(); }
-
-/* --- Ventas tab --- */
-function renderVentasTab(){
-  const catalogBtn = `<div class="btnrow" style="margin-bottom:10px;">
-    <button class="btn btn-outline btn-sm" onclick="openModal('catalogManage',{editingId:null})">📦 Catálogo (${catalog.length})</button>
-    <button class="btn btn-outline btn-sm" onclick="setTab('reportes')">📊 Ventas por producto</button>
-  </div>`;
-  if(notes.length===0){
-    return catalogBtn + `<div class="empty"><span class="big">🧾</span>No has registrado notas de venta.<br>Toca + para crear la primera.</div>`;
-  }
-  const statusMap = computeEffectiveNoteStatuses();
-  const list = notes.slice().sort((a,b)=> b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
-  return catalogBtn + list.map(n=>{
-    const c = getClient(n.clientId);
-    const info = statusMap.get(n.id) || { saldo: Math.max(0, Math.round((n.total-(n.paid||0))*100)/100), status:'pendiente' };
-    let statusBadge;
-    if(n.fulfillmentStatus==='pedido') statusBadge = `<span class="badge" style="background:#F8E8C7;color:var(--gold-dark);">Pedido pendiente</span>`;
-    else if(info.status==='pagada') statusBadge = `<span class="badge" style="background:var(--green-bg);color:var(--green);">Pagada</span>`;
-    else if(info.status==='parcial') statusBadge = `<span class="badge" style="background:var(--blue-bg);color:var(--blue);">Parcial</span>`;
-    else statusBadge = `<span class="badge" style="background:var(--red-bg);color:var(--red);">Pendiente</span>`;
-    const notePct = (n.clientDiscountPct||0)+(n.extraDiscountPct||0);
-    return `<div class="card tap" onclick="openNoteDetail('${n.id}')">
-      <div class="row-between">
-        <div>
-          <div class="name">${esc(c ? c.name : '(cliente eliminado)')}</div>
-          <div class="meta">${fmtDate(n.date)} · ${n.items.length} producto(s) ${statusBadge}${notePct>0?` <span class="badge discount">-${notePct}%</span>`:''}</div>
-        </div>
-        <div class="balance mono">${fmt(n.total)}</div>
-      </div>
-    </div>`;
-  }).join('');
+function setRouteDay(day){
+  state.routeDay=day;
+  state.smartRoute=null;
+  document.getElementById('app').innerHTML=renderRutasTab();
 }
 
 /* --- Reportes: ventas por producto --- */
@@ -743,7 +1175,7 @@ function fulfillOrder(noteId){
 
 /* --- Adeudos tab --- */
 function renderAdeudosTab(){
-  const withBalance = clients.map(c=>({c, bal: balanceFor(c.id)})).filter(x=>x.bal>0.004).sort((a,b)=>b.bal-a.bal);
+  const withBalance = visibleClients().map(c=>({c, bal: balanceFor(c.id)})).filter(x=>x.bal>0.004).sort((a,b)=>b.bal-a.bal);
   const total = totalAdeudoGlobal();
   const summary = `<div class="card" style="background:var(--cover);color:var(--paper);border:none;">
     <div class="meta" style="color:var(--gold);font-weight:700;">TOTAL POR COBRAR</div>
@@ -771,13 +1203,15 @@ function renderAdeudosTab(){
 
 /* --- Client detail --- */
 function renderClientDetail(id){
+  if(!canAccessClient(id)){ state.clientDetailId=null; return `<div class="empty">No tienes acceso a este cliente.</div>`; }
   const c = getClient(id);
   if(!c){ state.clientDetailId=null; return renderClientesTab(); }
   const bal = balanceFor(id);
   const statusMap = computeEffectiveNoteStatuses();
   const cn = notesFor(id).map(n=>({type:'nota', date:n.date, data:n}));
   const cp = paymentsFor(id).map(p=>({type:'pago', date:p.date, data:p}));
-  const timeline = [...cn, ...cp].sort((a,b)=> b.date.localeCompare(a.date));
+  const cv = visitsForClient(id).map(v=>({type:'visita', date:v.date, data:v}));
+  const timeline = [...cn, ...cp, ...cv].sort((a,b)=> b.date.localeCompare(a.date));
 
   const daysBadges = (c.days||[]).length
     ? (c.days||[]).slice().sort().map(d=>`<span class="badge zone" style="margin-right:4px;">${DAY_LABELS[d]}</span>`).join('')
@@ -793,12 +1227,19 @@ function renderClientDetail(id){
           <div class="tl-head"><span>Nota de venta</span><span class="mono">${fmt(n.total)}</span></div>
           <div class="tl-sub">${n.items.length} producto(s) ${info.saldo>0.004?`· saldo ${fmt(info.saldo)}`:'· pagada'}</div>
         </div>`;
-      } else {
+      } else if(item.type==='pago') {
         const p = item.data;
         return `<div class="tl-item">
           <div class="tl-date">${fmtDate(p.date)}</div>
           <div class="tl-head"><span>Pago recibido</span><span class="mono" style="color:var(--green);">+${fmt(p.amount)}</span></div>
           <div class="tl-sub">${paymentMethodLabel(p.method)}${p.notes?` · ${esc(p.notes)}`:''}</div>
+        </div>`;
+      } else {
+        const v=item.data;
+        return `<div class="tl-item">
+          <div class="tl-date">${fmtDate(v.date)}</div>
+          <div class="tl-head"><span>${v.status==='en_visita'?'Visita en curso':'Visita realizada'}</span><span class="mono">${formatMinutes(visitDurationMinutes(v))}</span></div>
+          <div class="tl-sub">${formatClock(v.startedAt)}${v.endedAt?`–${formatClock(v.endedAt)}`:''}${v.observations?` · ${esc(v.observations)}`:''}</div>
         </div>`;
       }
     }).join('');
@@ -809,6 +1250,20 @@ function renderClientDetail(id){
         <div>
           <div class="meta">${esc(c.address||'Sin dirección registrada')}</div>
           <div style="margin-top:4px;">${daysBadges}${c.discount>0?` <span class="badge discount">Descuento fijo -${c.discount}%</span>`:''}</div>
+        </div>
+      </div>
+      <div class="visit-panel">
+        <div class="row-between"><div><div class="location-title">📋 Visita de hoy</div><div class="location-state">${visitStatusBadge(c.id)}</div></div></div>
+        <div class="btnrow">${visitActionButtons(c.id)}</div>
+        ${todayVisitForClient(c.id)?`<div class="hint">Inicio: ${formatClock(todayVisitForClient(c.id).startedAt)}${todayVisitForClient(c.id).endedAt?` · Fin: ${formatClock(todayVisitForClient(c.id).endedAt)} · Duración: ${formatMinutes(visitDurationMinutes(todayVisitForClient(c.id)))}`:''}</div>`:''}
+      </div>
+      <div class="location-panel">
+        <div class="row-between">
+          <div><div class="location-title">📍 Ubicación</div><div class="location-state ${hasClientLocation(c)?'saved':'missing'}">${hasClientLocation(c)?'🟢 Ubicación guardada':'⚪ Sin ubicación registrada'}</div></div>
+        </div>
+        <div class="btnrow">
+          <button class="btn btn-outline btn-sm" onclick="saveClientLocation('${c.id}')">${hasClientLocation(c)?'Actualizar ubicación':'Guardar ubicación'}</button>
+          ${hasClientLocation(c)?`<button class="btn btn-gold btn-sm" onclick="openClientMap('${c.id}')">🗺 Ir al cliente</button>`:''}
         </div>
       </div>
       <div class="total-strip" style="margin-top:10px;">
@@ -853,6 +1308,9 @@ function renderModal(){
   if(type==='catalogManage') html = modalCatalogManage();
   if(type==='salesStats') html = modalSalesStats();
   if(type==='inventoryEntry') html = modalInventoryEntry();
+  if(type==='usersManage') html = modalUsersManage();
+  if(type==='visitFinish') html = modalVisitFinish();
+  if(type==='visitPrompt') html = modalVisitPrompt();
   root.innerHTML = `<div class="modal-overlay" onclick="closeModal()"><div class="modal-sheet" onclick="event.stopPropagation()">${html}</div></div>`;
 }
 
@@ -881,6 +1339,12 @@ function modalClientForm(){
     <label>Descuento permanente (%)</label>
     <input type="number" id="f-discount" min="0" max="100" step="any" value="${editing?(editing.discount||0):0}" placeholder="0">
     <div class="hint">Se aplicará automáticamente en cada nota de venta de este cliente. Déjalo en 0 si compra a precio de lista.</div>
+    ${isAdmin()?`<label>Vendedor asignado</label>
+    <select id="f-assigned-to">
+      <option value="">Sin asignar</option>
+      ${sellers.filter(s=>s.role==='vendedor' && s.active!==false).map(s=>`<option value="${esc(s.uid)}" ${(editing?.assignedTo||'')===s.uid?'selected':''}>${esc(s.name||s.email)}</option>`).join('')}
+    </select>
+    <div class="hint">El vendedor solo verá los clientes que tenga asignados.</div>`:''}
     <label>Días de ruta</label>
     <div class="chiprow">${dayChips}</div>
     <div class="hint">Toca los días en que normalmente visitas a este cliente.</div>
@@ -900,6 +1364,7 @@ function submitClientForm(){
     zone: document.getElementById('f-zone').value.trim(),
     discount: Math.min(100, Math.max(0, Number(document.getElementById('f-discount').value)||0)),
     days: p.days.slice(),
+    assignedTo: isAdmin() ? (document.getElementById('f-assigned-to')?.value || '') : (p.id ? (getClient(p.id)?.assignedTo || currentUser.uid) : currentUser.uid),
   };
   addOrUpdateClient(data, p.id);
   closeModal(); renderApp();
@@ -909,7 +1374,7 @@ function submitClientForm(){
 function blankItem(){ return { catalogId: catalog.length===0 ? '__custom__' : '', desc:'', qty:1, price:0 }; }
 function openNoteForm(clientId){
   openModal('noteForm', {
-    clientId: clientId || (clients[0] ? clients[0].id : ''),
+    clientId: clientId || (visibleClients()[0] ? visibleClients()[0].id : ''),
     date: todayISO(),
     items: [blankItem()],
     paid: 0,
@@ -1275,6 +1740,22 @@ function modalSalesStats(){
   `;
 }
 
+/* --- Vendedores (sin Cloud Functions) --- */
+function modalUsersManage(){
+  if(!isAdmin()) return `<div class="modal-title"><span>Acceso restringido</span><button onclick="closeModal()">✕</button></div><div class="empty">Solo el administrador puede consultar vendedores.</div>`;
+  const rows=sellers.slice().sort((a,b)=>(a.name||a.email||'').localeCompare(b.name||b.email||'')).map(s=>`
+    <div class="card">
+      <div class="row-between">
+        <div><div class="name">${esc(s.name||'Sin nombre')}</div><div class="meta">${esc(s.email||'')} · ${esc(s.role||'vendedor')}</div></div>
+        <span class="badge" style="background:${s.active===false?'var(--red-bg)':'var(--green-bg)'};color:${s.active===false?'var(--red)':'var(--green)'}">${s.active===false?'Inactivo':'Activo'}</span>
+      </div>
+      <div class="meta" style="margin-top:8px;">Clientes asignados: ${clients.filter(c=>c.assignedTo===s.uid).length}</div>
+    </div>`).join('');
+  return `<div class="modal-title"><span>Vendedores</span><button onclick="closeModal()">✕</button></div>
+    <div class="hint" style="margin-bottom:12px;">Los usuarios se crean en Firebase Authentication. Deben iniciar sesión una vez para aparecer aquí.</div>
+    ${rows || `<div class="empty">Todavía no aparecen perfiles de vendedores.</div>`}`;
+}
+
 /* --- Confirm modal --- */
 function modalConfirm(){
   const p = state.modal.payload;
@@ -1303,8 +1784,9 @@ window.addEventListener('salsamix-auth-change', async event=>{
     renderApp();
   }else{
     loaded = false;
-    clients=[]; notes=[]; payments=[]; catalog=[]; inventoryMovements=[];
+    clients=[]; notes=[]; payments=[]; catalog=[]; inventoryMovements=[]; sellers=[];
     if(unsubscribeCloud){ unsubscribeCloud(); unsubscribeCloud=null; }
+    if(unsubscribeUsers){ unsubscribeUsers(); unsubscribeUsers=null; }
   }
 });
 

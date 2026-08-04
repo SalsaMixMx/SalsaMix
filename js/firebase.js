@@ -5,6 +5,8 @@ import {
   getDoc,
   setDoc,
   onSnapshot,
+  collection,
+  getDocs,
 } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-firestore.js";
 import {
   getAuth,
@@ -29,7 +31,7 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
 const DATA_COLLECTION = "salsamixData";
-const NAMES = ["clients", "notes", "payments", "catalog", "inventoryMovements"];
+const NAMES = ["clients", "notes", "payments", "catalog", "inventoryMovements", "visits"];
 
 function dataRef(name){
   return doc(db, DATA_COLLECTION, name);
@@ -67,6 +69,18 @@ function subscribe(callback){
   return () => unsubscribers.forEach(unsubscribe => unsubscribe());
 }
 
+
+async function loadUsers(){
+  const snapshot = await getDocs(collection(db, "users"));
+  return snapshot.docs.map(item=>({ uid:item.id, ...item.data() }));
+}
+
+function subscribeUsers(callback){
+  return onSnapshot(collection(db, "users"), snapshot=>{
+    callback(snapshot.docs.map(item=>({ uid:item.id, ...item.data() })));
+  }, error=>console.error("Error escuchando usuarios:", error));
+}
+
 function profileRef(uid){
   return doc(db, "users", uid);
 }
@@ -100,7 +114,7 @@ async function resetPassword(email){
   return sendPasswordResetEmail(auth, email.trim());
 }
 
-window.firebaseStore = { loadAll, save, saveAll, subscribe };
+window.firebaseStore = { loadAll, save, saveAll, subscribe, loadUsers, subscribeUsers };
 window.firebaseAuth = { login, logout, resetPassword };
 window.authReady = new Promise(resolve => {
   onAuthStateChanged(auth, async user => {
