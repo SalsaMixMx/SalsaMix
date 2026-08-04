@@ -32,6 +32,14 @@ function fmtDate(iso){
   const d = new Date(iso+'T00:00:00');
   return d.toLocaleDateString('es-MX',{day:'2-digit',month:'short',year:'numeric'});
 }
+function paymentMethodLabel(method){
+  const labels = {
+    efectivo: 'Efectivo',
+    transferencia: 'Transferencia',
+    tarjeta: 'Tarjeta'
+  };
+  return labels[method] || 'Método no especificado';
+}
 function mondayIndexToday(){ const j = new Date().getDay(); return j===0?6:j-1; }
 
 /* ---------------- STORAGE / FIREBASE ---------------- */
@@ -562,7 +570,7 @@ function renderClientDetail(id){
         return `<div class="tl-item">
           <div class="tl-date">${fmtDate(p.date)}</div>
           <div class="tl-head"><span>Pago recibido</span><span class="mono" style="color:var(--green);">+${fmt(p.amount)}</span></div>
-          ${p.notes?`<div class="tl-sub">${esc(p.notes)}</div>`:''}
+          <div class="tl-sub">${paymentMethodLabel(p.method)}${p.notes?` · ${esc(p.notes)}`:''}</div>
         </div>`;
       }
     }).join('');
@@ -883,7 +891,7 @@ function confirmDeleteNote(id){
 
 /* --- Pago form modal --- */
 function openPaymentForm(clientId){
-  openModal('paymentForm', { clientId: clientId || (clients[0]?clients[0].id:''), amount:'', date: todayISO(), notes:'' });
+  openModal('paymentForm', { clientId: clientId || (clients[0]?clients[0].id:''), amount:'', method:'efectivo', date: todayISO(), notes:'' });
 }
 function modalPaymentForm(){
   const p = state.modal.payload;
@@ -899,6 +907,12 @@ function modalPaymentForm(){
     <select id="p-client">${clientOptions}</select>
     <label>Monto recibido *</label>
     <input type="number" id="p-amount" min="0" step="any" value="${p.amount}" placeholder="0.00">
+    <label>Método de pago *</label>
+    <select id="p-method">
+      <option value="efectivo" ${p.method==='efectivo'?'selected':''}>Efectivo</option>
+      <option value="transferencia" ${p.method==='transferencia'?'selected':''}>Transferencia</option>
+      <option value="tarjeta" ${p.method==='tarjeta'?'selected':''}>Tarjeta</option>
+    </select>
     <label>Fecha</label>
     <input type="date" id="p-date" value="${p.date}">
     <label>Notas (opcional)</label>
@@ -911,11 +925,12 @@ function modalPaymentForm(){
 function submitPaymentForm(){
   const clientId = document.getElementById('p-client').value;
   const amount = Number(document.getElementById('p-amount').value);
+  const method = document.getElementById('p-method').value;
   const date = document.getElementById('p-date').value || todayISO();
   const notesVal = document.getElementById('p-notes').value.trim();
   if(!clientId){ showToast('Selecciona un cliente'); return; }
   if(!amount || amount<=0){ showToast('Ingresa un monto válido'); return; }
-  addPayment({ clientId, amount, date, notes: notesVal });
+  addPayment({ clientId, amount, method, date, notes: notesVal });
   closeModal(); renderApp();
   showToast('Pago registrado');
 }
