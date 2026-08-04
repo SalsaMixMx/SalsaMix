@@ -26,6 +26,7 @@
   <nav class="bottomnav" id="bottomnav"></nav>
   <div id="modal-root"></div>
   <div id="toast-root"></div>
+  <div id="pwa-update-root" aria-live="polite"></div>
 </div>
   <script>
     window.firebaseReady = new Promise((resolve, reject) => {
@@ -38,12 +39,78 @@
   <script src="js/app.js" defer></script>
   <script>
     if ('serviceWorker' in navigator) {
+      let pwaRegistration = null;
+      let refreshingForUpdate = false;
+
+      function showPwaUpdate(registration) {
+        pwaRegistration = registration;
+        const root = document.getElementById('pwa-update-root');
+        if (!root || !registration.waiting) return;
+        root.innerHTML = `
+          <div class="pwa-update-banner">
+            <div class="pwa-update-copy">
+              <strong>Nueva versión disponible</strong>
+              <span>Actualiza SalsaMix para usar las mejoras más recientes.</span>
+            </div>
+            <button type="button" onclick="applyPwaUpdate()">Actualizar ahora</button>
+            <button type="button" class="pwa-update-close" onclick="dismissPwaUpdate()" aria-label="Cerrar">×</button>
+          </div>`;
+      }
+
+      window.dismissPwaUpdate = function () {
+        const root = document.getElementById('pwa-update-root');
+        if (root) root.innerHTML = '';
+      };
+
+      window.applyPwaUpdate = function () {
+        if (!pwaRegistration || !pwaRegistration.waiting) return;
+        const button = document.querySelector('.pwa-update-banner > button:not(.pwa-update-close)');
+        if (button) {
+          button.disabled = true;
+          button.textContent = 'Actualizando…';
+        }
+        pwaRegistration.waiting.postMessage({ type: 'SKIP_WAITING' });
+      };
+
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (refreshingForUpdate) return;
+        refreshingForUpdate = true;
+        window.location.reload();
+      });
+
       window.addEventListener('load', async () => {
         try {
-          const registration = await navigator.serviceWorker.register('./service-worker.js');
-          registration.update();
+          const registration = await navigator.serviceWorker.register('./service-worker.js', {
+            updateViaCache: 'none'
+          });
+          pwaRegistration = registration;
+
+          if (registration.waiting && navigator.serviceWorker.controller) {
+            showPwaUpdate(registration);
+          }
+
+          registration.addEventListener('updatefound', () => {
+            const worker = registration.installing;
+            if (!worker) return;
+            worker.addEventListener('statechange', () => {
+              if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+                showPwaUpdate(registration);
+              }
+            });
+          });
+
+          // Buscar una versión nueva al abrir la app.
+          await registration.update();
+
+          // También buscar cuando la app vuelve al primer plano.
+          document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') registration.update();
+          });
+
+          // Y una vez por hora si permanece abierta mucho tiempo.
+          window.setInterval(() => registration.update(), 60 * 60 * 1000);
         } catch (error) {
-          console.warn('No se pudo registrar la PWA:', error);
+          console.warn('No se pudo registrar o actualizar la PWA:', error);
         }
       });
     }

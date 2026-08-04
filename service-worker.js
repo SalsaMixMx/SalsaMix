@@ -1,4 +1,4 @@
-const CACHE_NAME = 'salsamix-pwa-v1.0.0';
+const CACHE_NAME = 'salsamix-pwa-v3.0.0-auto-update';
 const APP_SHELL = [
   './',
   './index.html',
@@ -14,15 +14,30 @@ const APP_SHELL = [
 ];
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL)));
-  self.skipWaiting();
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    await Promise.all(APP_SHELL.map(async url => {
+      const response = await fetch(new Request(url, { cache: 'reload' }));
+      if (!response.ok) throw new Error(`No se pudo almacenar ${url}`);
+      await cache.put(url, response);
+    }));
+  })());
+  // No usamos skipWaiting aquí: la aplicación avisará al usuario
+  // y activará la versión nueva cuando pulse "Actualizar ahora".
+});
+
+self.addEventListener('message', event => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener('activate', event => {
-  event.waitUntil(
-    caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key))))
-      .then(() => self.clients.claim())
-  );
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key)));
+    await self.clients.claim();
+  })());
 });
 
 self.addEventListener('fetch', event => {
@@ -30,31 +45,41 @@ self.addEventListener('fetch', event => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
 
-  // Firebase, Google Fonts, Leaflet and map tiles always use the network.
+  // Firebase, mapas, fuentes y otros servicios externos mantienen su propia caché.
   if (url.origin !== self.location.origin) return;
 
+  // Navegación: primero red, caché como respaldo. Así index.html se actualiza rápido.
   if (request.mode === 'navigate') {
-    event.respondWith(
-      fetch(request, { cache: 'no-store' })
-        .then(response => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put('./index.html', copy));
-          return response;
-        })
-        .catch(() => caches.match('./index.html'))
-    );
+    event.respondWith((async () => {
+      try {
+        const response = await fetch(request, { cache: 'no-store' });
+        if (response && response.ok) {
+          const cache = await caches.open(CACHE_NAME);
+          await cache.put('./index.html', response.clone());
+        }
+        return response;
+      } catch (error) {
+        return (await caches.match('./index.html')) || new Response('Sin conexión', { status: 503 });
+      }
+    })());
     return;
   }
 
-  event.respondWith(
-    fetch(request, { cache: 'no-store' })
-      .then(response => {
-        if (response.ok) {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
-        }
-        return response;
-      })
-      .catch(() => caches.match(request))
-  );
+  // Archivos de la app: caché rápida y actualización en segundo plano.
+  event.respondWith((async () => {
+    const cached = await caches.match(request);
+    const networkPromise = fetch(request, { cache: 'no-cache' }).then(async response => {
+      if (response && response.ok) {
+        const cache = await caches.open(CACHE_NAME);
+        await cache.put(request, response.clone());
+      }
+      return response;
+    }).catch(() => null);
+
+    if (cached) {
+      event.waitUntil(networkPromise);
+      return cached;
+    }
+    return (await networkPromise) || new Response('Sin conexión', { status: 503 });
+  })());
 });

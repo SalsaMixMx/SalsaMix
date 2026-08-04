@@ -68,3 +68,11 @@ Sección exclusiva de administrador con pines para todos los clientes que tienen
 
 ## PWA instalable
 Incluye manifiesto, service worker, iconos y opción de instalación desde el menú superior. La interfaz puede cargar desde caché; Firebase y los mapas requieren conexión.
+
+
+## Optimización de carga
+La PWA muestra primero datos locales y sincroniza Firebase en segundo plano. Firestore utiliza persistencia local y el Service Worker sirve la interfaz desde caché.
+
+
+## Actualizaciones de la PWA
+La app detecta nuevas versiones y muestra un botón **Actualizar ahora**. No es necesario desinstalarla.

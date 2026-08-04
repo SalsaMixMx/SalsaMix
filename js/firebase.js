@@ -1,6 +1,8 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-app.js";
 import {
-  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   doc,
   getDoc,
   setDoc,
@@ -28,7 +30,11 @@ const firebaseConfig = {
 
 const INITIAL_ADMIN_EMAIL = "josegonzalezcarrillo88@gmail.com";
 const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
+const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager(),
+  }),
+});
 const auth = getAuth(app);
 const DATA_COLLECTION = "salsamixData";
 const NAMES = ["clients", "notes", "payments", "catalog", "inventoryMovements", "visits"];

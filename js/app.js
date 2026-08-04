@@ -12,6 +12,7 @@ let currentProfile = null;
 let deferredInstallPrompt = null;
 let unsubscribeCloud = null;
 let unsubscribeUsers = null;
+let syncState = 'idle'; // idle | cached | syncing | online | offline
 
 const state = {
   tab: 'clientes',
@@ -182,71 +183,103 @@ function saveLocalBackup(key, value){
   try{ localStorage.setItem(key, JSON.stringify(value)); }catch(e){}
 }
 
-async function loadAll(){
+async function loadLocalSnapshot(){
+  const values = await Promise.all([
+    readLegacyValue(STORAGE_KEYS.clients),
+    readLegacyValue(STORAGE_KEYS.notes),
+    readLegacyValue(STORAGE_KEYS.payments),
+    readLegacyValue(STORAGE_KEYS.catalog),
+    readLegacyValue(STORAGE_KEYS.inventoryMovements),
+    readLegacyValue(STORAGE_KEYS.visits),
+  ]);
+  [clients, notes, payments, catalog, inventoryMovements, visits] = values;
+  loaded = true;
+  syncState = 'cached';
+}
+
+function persistCurrentSnapshot(){
+  saveLocalBackup(STORAGE_KEYS.clients, clients);
+  saveLocalBackup(STORAGE_KEYS.notes, notes);
+  saveLocalBackup(STORAGE_KEYS.payments, payments);
+  saveLocalBackup(STORAGE_KEYS.catalog, catalog);
+  saveLocalBackup(STORAGE_KEYS.inventoryMovements, inventoryMovements);
+  saveLocalBackup(STORAGE_KEYS.visits, visits);
+}
+
+function applyCloudUpdate(data){
+  if(data.clients) clients = data.clients;
+  if(data.notes) notes = data.notes;
+  if(data.payments) payments = data.payments;
+  if(data.catalog) catalog = data.catalog;
+  if(data.inventoryMovements) inventoryMovements = data.inventoryMovements;
+  if(data.visits) visits = data.visits;
+  persistCurrentSnapshot();
+  syncState = 'online';
+  if(loaded) renderApp();
+}
+
+async function syncCloudInBackground(){
+  syncState = 'syncing';
+  if(loaded) renderHeader();
   try{
     await window.firebaseReady;
-    const cloud = await window.firebaseStore.loadAll();
-    sellers = await window.firebaseStore.loadUsers();
-    const cloudHasData = Object.values(cloud.exists).some(Boolean);
+    const [cloud, profiles] = await Promise.all([
+      window.firebaseStore.loadAll(),
+      window.firebaseStore.loadUsers(),
+    ]);
+    sellers = profiles || [];
+    const cloudHasData = Object.values(cloud.exists || {}).some(Boolean);
 
     if(cloudHasData){
-      clients = cloud.clients || [];
-      notes = cloud.notes || [];
-      payments = cloud.payments || [];
-      catalog = cloud.catalog || [];
-      inventoryMovements = cloud.inventoryMovements || [];
-      visits = cloud.visits || [];
+      applyCloudUpdate({
+        clients: cloud.clients || [], notes: cloud.notes || [], payments: cloud.payments || [],
+        catalog: cloud.catalog || [], inventoryMovements: cloud.inventoryMovements || [], visits: cloud.visits || [],
+      });
     }else{
-      clients = await readLegacyValue(STORAGE_KEYS.clients);
-      notes = await readLegacyValue(STORAGE_KEYS.notes);
-      payments = await readLegacyValue(STORAGE_KEYS.payments);
-      catalog = await readLegacyValue(STORAGE_KEYS.catalog);
-      inventoryMovements = await readLegacyValue(STORAGE_KEYS.inventoryMovements);
-      visits = await readLegacyValue(STORAGE_KEYS.visits);
       await window.firebaseStore.saveAll({clients, notes, payments, catalog, inventoryMovements, visits});
+      syncState = 'online';
     }
-
-    saveLocalBackup(STORAGE_KEYS.clients, clients);
-    saveLocalBackup(STORAGE_KEYS.notes, notes);
-    saveLocalBackup(STORAGE_KEYS.payments, payments);
-    saveLocalBackup(STORAGE_KEYS.catalog, catalog);
-    saveLocalBackup(STORAGE_KEYS.inventoryMovements, inventoryMovements);
-    saveLocalBackup(STORAGE_KEYS.visits, visits);
 
     if(unsubscribeCloud) unsubscribeCloud();
     if(unsubscribeUsers) unsubscribeUsers();
-    unsubscribeCloud = window.firebaseStore.subscribe((data)=>{
-      if(data.clients) clients = data.clients;
-      if(data.notes) notes = data.notes;
-      if(data.payments) payments = data.payments;
-      if(data.catalog) catalog = data.catalog;
-      if(data.inventoryMovements) inventoryMovements = data.inventoryMovements;
-      if(data.visits) visits = data.visits;
+    unsubscribeCloud = window.firebaseStore.subscribe(applyCloudUpdate);
+    unsubscribeUsers = window.firebaseStore.subscribeUsers((profiles)=>{
+      sellers = profiles;
+      syncState = 'online';
       if(loaded) renderApp();
     });
-    unsubscribeUsers = window.firebaseStore.subscribeUsers((profiles)=>{ sellers = profiles; if(loaded) renderApp(); });
+    persistCurrentSnapshot();
+    if(loaded) renderApp();
   }catch(e){
     console.error(e);
-    clients = await readLegacyValue(STORAGE_KEYS.clients);
-    notes = await readLegacyValue(STORAGE_KEYS.notes);
-    payments = await readLegacyValue(STORAGE_KEYS.payments);
-    catalog = await readLegacyValue(STORAGE_KEYS.catalog);
-    inventoryMovements = await readLegacyValue(STORAGE_KEYS.inventoryMovements);
-    visits = await readLegacyValue(STORAGE_KEYS.visits);
-    showToast('Firebase no respondió; usando respaldo local');
+    syncState = 'offline';
+    if(loaded){ renderHeader(); showToast('Mostrando datos guardados; sincronizaremos al recuperar conexión'); }
   }
-  loaded = true;
+}
+
+async function loadAll(){
+  // Muestra primero el último respaldo local para que la app abra de inmediato.
+  await loadLocalSnapshot();
+  renderApp();
+  // Firebase se actualiza sin bloquear la interfaz.
+  syncCloudInBackground();
 }
 
 async function saveCollection(name, value, localKey){
+  // El cambio se guarda de inmediato en el dispositivo.
   saveLocalBackup(localKey, value);
+  syncState = navigator.onLine ? 'syncing' : 'offline';
+  if(loaded) renderHeader();
   try{
     await window.firebaseReady;
     await window.firebaseStore.save(name, value);
+    syncState = 'online';
   }catch(e){
     console.error(e);
-    showToast('No se pudo sincronizar con Firebase');
+    syncState = 'offline';
+    showToast('Cambio guardado en este dispositivo; falta sincronizar');
   }
+  if(loaded) renderHeader();
 }
 async function saveClients(){ return saveCollection('clients', clients, STORAGE_KEYS.clients); }
 async function saveNotes(){ return saveCollection('notes', notes, STORAGE_KEYS.notes); }
@@ -813,7 +846,7 @@ function renderHeader(){
       </div>`;
     return;
   }
-  const titles = { clientes:'Clientes', rutas:'Rutas de la semana', ventas:'Notas de venta', adeudos:'Por cobrar', reportes:'Ventas por producto', inventario:'Inventario', vendedores:'Vendedores', mapa:'Mapa de clientes' };
+  const titles = { clientes:'Mi Ruta', rutas:'Rutas de la semana', ventas:'Notas de venta', adeudos:'Adeudos', reportes:'Ventas por producto', inventario:'Inventario', vendedores:'Vendedores', mapa:'Mapa de clientes' };
   const userName = currentProfile ? (currentProfile.name || currentProfile.email || 'Usuario') : 'Usuario';
   const userRole = currentProfile ? (currentProfile.role || 'vendedor') : 'vendedor';
   el.innerHTML = `
@@ -822,7 +855,7 @@ function renderHeader(){
       <button class="top-menu-btn" onclick="toggleTopMenu(event)" aria-label="Abrir menú" aria-expanded="${state.topMenuOpen?'true':'false'}">☰</button>
       ${renderTopMenu()}
     </div>
-    <div class="brand stamp">${titles[state.tab]}<small>Libreta digital de ventas</small><div class="sync-status">☁ Sincronización Firebase</div></div>
+    <div class="brand stamp">${titles[state.tab]}<small>Libreta digital de ventas</small><div class="sync-status ${syncState}">${syncState==='syncing'?'↻ Sincronizando…':syncState==='offline'?'⚠ Sin conexión · datos guardados':syncState==='cached'?'◷ Datos guardados · actualizando…':'☁ Sincronizado con Firebase'}</div></div>
     <div class="userbar"><div class="userbar-info"><div class="userbar-name">${esc(userName)}</div><div class="userbar-role">${esc(userRole)}</div></div><button class="logout-btn" onclick="logoutUser()">Salir</button></div>
     ${state.tab==='clientes' ? `<div class="search-wrap"><input type="text" placeholder="Buscar cliente..." value="${esc(state.search)}" oninput="onSearchInput(this.value)"></div>` : ''}
   `;
@@ -2011,6 +2044,9 @@ window.addEventListener('appinstalled', ()=>{
   if(currentUser && currentProfile) renderHeader();
 });
 
+window.addEventListener('online', ()=>{ syncState='syncing'; if(currentUser) syncCloudInBackground(); });
+window.addEventListener('offline', ()=>{ syncState='offline'; if(loaded) renderHeader(); });
+
 /* ---------------- INIT ---------------- */
 window.addEventListener('salsamix-auth-change', async event=>{
   currentUser = event.detail.user;
@@ -2024,7 +2060,7 @@ window.addEventListener('salsamix-auth-change', async event=>{
     renderApp();
   }else{
     loaded = false;
-    clients=[]; notes=[]; payments=[]; catalog=[]; inventoryMovements=[]; sellers=[];
+    clients=[]; notes=[]; payments=[]; catalog=[]; inventoryMovements=[]; visits=[]; sellers=[]; syncState='idle';
     if(unsubscribeCloud){ unsubscribeCloud(); unsubscribeCloud=null; }
     if(unsubscribeUsers){ unsubscribeUsers(); unsubscribeUsers=null; }
   }
