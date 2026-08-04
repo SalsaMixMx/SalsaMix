@@ -379,3 +379,7 @@ nav.bottomnav svg{width:23px;height:23px;}
   top:0;
 }
 .admin-client-map .leaflet-tile{position:absolute;left:0;top:0;}
+
+/* PWA */
+.install-menu-icon{width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;border:1.8px solid currentColor;border-radius:6px;font-size:17px;font-weight:800;line-height:1;}
+@media (display-mode: standalone){body{overscroll-behavior-y:none;} #shell{min-height:100dvh;}}

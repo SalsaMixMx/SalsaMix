@@ -64,3 +64,7 @@ Se restauró la función de renderizado de la pestaña Ventas para evitar que qu
 
 ## Mapa de clientes
 Sección exclusiva de administrador con pines para todos los clientes que tienen ubicación GPS guardada.
+
+
+## PWA instalable
+Incluye manifiesto, service worker, iconos y opción de instalación desde el menú superior. La interfaz puede cargar desde caché; Firebase y los mapas requieren conexión.

@@ -9,6 +9,7 @@ let sellers = [];
 let loaded = false;
 let currentUser = null;
 let currentProfile = null;
+let deferredInstallPrompt = null;
 let unsubscribeCloud = null;
 let unsubscribeUsers = null;
 
@@ -834,6 +835,7 @@ function renderTopMenu(){
     : [['rutas','Rutas']];
   return `<div class="top-menu-dropdown" onclick="event.stopPropagation()">
     ${items.map(([key,label])=>`<button class="${state.tab===key?'active':''}" onclick="selectTopMenuTab('${key}')">${ICONS[key]}<span>${label}</span></button>`).join('')}
+    ${!isPwaInstalled()?`<button onclick="installSalsaMix()"><span class="install-menu-icon">⇩</span><span>Instalar aplicación</span></button>`:''}
   </div>`;
 }
 function toggleTopMenu(event){
@@ -1975,6 +1977,38 @@ function runConfirmAction(){ if(window.__confirmAction) window.__confirmAction()
 
 document.addEventListener('click', (event)=>{
   if(state.topMenuOpen && !event.target.closest('.header-topline')) closeTopMenu();
+});
+
+/* ---------------- INSTALACIÓN PWA ---------------- */
+function isPwaInstalled(){
+  return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+}
+async function installSalsaMix(){
+  state.topMenuOpen=false;
+  renderHeader();
+  if(deferredInstallPrompt){
+    deferredInstallPrompt.prompt();
+    await deferredInstallPrompt.userChoice;
+    deferredInstallPrompt=null;
+    renderHeader();
+    return;
+  }
+  const isiOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
+  if(isiOS){
+    showToast('En iPhone: Compartir → Añadir a pantalla de inicio');
+  }else{
+    showToast('Abre el menú del navegador y selecciona Instalar aplicación');
+  }
+}
+window.addEventListener('beforeinstallprompt', event=>{
+  event.preventDefault();
+  deferredInstallPrompt=event;
+  if(currentUser && currentProfile) renderHeader();
+});
+window.addEventListener('appinstalled', ()=>{
+  deferredInstallPrompt=null;
+  showToast('SalsaMix quedó instalada');
+  if(currentUser && currentProfile) renderHeader();
 });
 
 /* ---------------- INIT ---------------- */
