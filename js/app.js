@@ -166,6 +166,11 @@ const STORAGE_KEYS = {
   visits: 'visits-data',
 };
 
+function scopedStorageKey(key){
+  const uid=currentUser?.uid || 'anonymous';
+  return `salsamix:${uid}:${key}`;
+}
+
 async function readLegacyValue(key){
   try{
     if(window.storage && typeof window.storage.get === 'function'){
@@ -174,14 +179,20 @@ async function readLegacyValue(key){
     }
   }catch(e){ console.warn('No se pudo leer window.storage:', key, e); }
   try{
-    const value = localStorage.getItem(key);
-    return value ? JSON.parse(value) : [];
+    const scoped=localStorage.getItem(scopedStorageKey(key));
+    if(scoped) return JSON.parse(scoped);
+    if(isAdmin()){
+      const legacy=localStorage.getItem(key);
+      return legacy ? JSON.parse(legacy) : [];
+    }
+    return [];
   }catch(e){ return []; }
 }
 
 function saveLocalBackup(key, value){
-  try{ localStorage.setItem(key, JSON.stringify(value)); }catch(e){}
+  try{ localStorage.setItem(scopedStorageKey(key), JSON.stringify(value)); }catch(e){}
 }
+
 
 async function loadLocalSnapshot(){
   const values = await Promise.all([
@@ -297,10 +308,14 @@ function showToast(msg){
 /* ---------------- DATA HELPERS ---------------- */
 function getClient(id){ return clients.find(c=>c.id===id); }
 function isDeliveredNote(note){ return note.fulfillmentStatus !== 'pedido'; }
+function isConsignmentNote(note){ return note.saleType === 'consignacion'; }
+function isCollectableNote(note){ return isDeliveredNote(note) && !isConsignmentNote(note); }
+function clientTypeLabel(type){ return type==='punto_venta' ? 'Punto de venta' : 'Cliente'; }
+
 function notesFor(id){ return notes.filter(n=>n.clientId===id).sort((a,b)=> b.date.localeCompare(a.date)); }
 function paymentsFor(id){ return payments.filter(p=>p.clientId===id).sort((a,b)=> b.date.localeCompare(a.date)); }
 function balanceFor(id){
-  const collectableNotes = notes.filter(n=>n.clientId===id && isDeliveredNote(n));
+  const collectableNotes = notes.filter(n=>n.clientId===id && isCollectableNote(n));
   const totalVentas = collectableNotes.reduce((s,n)=>s+n.total,0);
   const totalPagadoVenta = collectableNotes.reduce((s,n)=>s+(n.paid||0),0);
   const totalAbonos = payments.filter(p=>p.clientId===id).reduce((s,p)=>s+p.amount,0);
@@ -325,7 +340,7 @@ function getStockShortages(items){
   }).filter(Boolean);
 }
 function addInventoryMovement(productId, type, quantity, details={}){
-  inventoryMovements.push({ id:uid(), productId, type, quantity:Number(quantity)||0, date:details.date||todayISO(), createdAt:new Date().toISOString(), noteId:details.noteId||null, reason:details.reason||'', ...actorFields('created') });
+  inventoryMovements.push({ id:uid(), productId, type, quantity:Number(quantity)||0, date:details.date||todayISO(), createdAt:new Date().toISOString(), noteId:details.noteId||null, reason:details.reason||'', sellerId:currentUser?.uid||null, ...actorFields('created') });
 }
 function applyInventorySale(items, noteId, date){
   (items||[]).forEach(item=>{
@@ -356,7 +371,7 @@ function totalAdeudoGlobal(){ return clients.reduce((s,c)=>s+Math.max(0,balanceF
    quede cubierto (ya sea porque se pagó al momento o porque un abono posterior la cubrió). */
 function computeEffectiveNoteStatuses(){
   const map = new Map();
-  const deliveredNotes = notes.filter(isDeliveredNote);
+  const deliveredNotes = notes.filter(isCollectableNote);
   const clientIds = Array.from(new Set(deliveredNotes.map(n=>n.clientId)));
   clientIds.forEach(cid=>{
     const clientNotes = deliveredNotes.filter(n=>n.clientId===cid).slice().sort((a,b)=> a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
@@ -636,7 +651,7 @@ function routeVisitSummary(list){
   const dayVisits=visits.filter(v=>v.date===today && ids.has(v.clientId) && visitSellerMatches(v));
   const visitedIds=new Set(dayVisits.filter(v=>v.status==='visitado').map(v=>v.clientId));
   const activeIds=new Set(dayVisits.filter(v=>v.status==='en_visita').map(v=>v.clientId));
-  const delivered=visibleNotes().filter(n=>n.date===today && ids.has(n.clientId) && isDeliveredNote(n));
+  const delivered=visibleNotes().filter(n=>n.date===today && ids.has(n.clientId) && isCollectableNote(n));
   const dayPayments=visiblePayments().filter(p=>p.date===today && ids.has(p.clientId));
   return {
     scheduled:list.length,
@@ -684,7 +699,7 @@ function computeProductStats(){
     });
   });
 
-  notes.filter(isDeliveredNote).forEach(note=>{
+  notes.filter(isCollectableNote).forEach(note=>{
     const client = getClient(note.clientId);
     const clientKey = note.clientId || 'cliente-eliminado';
     const clientName = client ? client.name : 'Cliente eliminado';
@@ -757,7 +772,7 @@ function addOrUpdateClient(data, id){
     const c = getClient(id);
     Object.assign(c, data, actorFields('updated'));
   } else {
-    clients.push({ id: uid(), createdAt: todayISO(), ...data, ...actorFields('created') });
+    clients.push({ id: uid(), createdAt: todayISO(), ...data, assignedTo:data.assignedTo || currentUser?.uid || null, ...actorFields('created') });
   }
   saveClients();
 }
@@ -772,9 +787,11 @@ function addNote(data){
   const discountPct = Math.min(100, (Number(data.clientDiscountPct)||0) + (Number(data.extraDiscountPct)||0));
   const discountAmount = subtotal * discountPct/100;
   const total = subtotal - discountAmount;
+  const client=getClient(data.clientId);
   const note = {
     id: uid(),
     ...data,
+    sellerId:data.sellerId || client?.assignedTo || currentUser?.uid || null,
     subtotal: Math.round(subtotal*100)/100,
     discountAmount: Math.round(discountAmount*100)/100,
     total: Math.round(total*100)/100,
@@ -790,7 +807,7 @@ function deleteNote(id){
   notes = notes.filter(n=>n.id!==id);
   saveNotes();
 }
-function addPayment(data){ payments.push({ id: uid(), ...data, ...actorFields('created') }); savePayments(); }
+function addPayment(data){ const client=getClient(data.clientId); payments.push({ id: uid(), ...data, sellerId:data.sellerId || client?.assignedTo || currentUser?.uid || null, ...actorFields('created') }); savePayments(); }
 function deletePayment(id){ payments = payments.filter(p=>p.id!==id); savePayments(); }
 function addProduct(data){ catalog.push({ id: uid(), cost:0, stock:0, minStock:0, ...data, ...actorFields('created') }); saveCatalog(); }
 function updateProduct(id, data){ const p = catalog.find(x=>x.id===id); if(p) Object.assign(p, data, actorFields('updated')); saveCatalog(); }
@@ -1080,7 +1097,7 @@ function renderClientesTab(){
     return `<div class="card tap" onclick="openClientDetail('${c.id}')">
       <div class="row-between">
         <div>
-          <div class="name">${esc(c.name)}</div>
+          <div class="name">${esc(c.name)} <span class="badge client-type ${c.clientType==='punto_venta'?'pos':'regular'}">${clientTypeLabel(c.clientType)}</span></div>
           <div class="meta">${c.zone?`<span class="badge zone">${esc(c.zone)}</span> `:''}${c.discount>0?`<span class="badge discount">-${c.discount}%</span> `:''}${esc(c.phone||'')}</div>
           <div class="location-inline ${hasClientLocation(c)?'saved':'missing'}">📍 ${clientLocationStatus(c)}</div>
           ${isAdmin()?`<div class="seller-assignment">👤 ${esc(sellerName(c.assignedTo))}</div>`:''}
@@ -1122,7 +1139,7 @@ function renderVendedoresTab(){
     if(!seller){ state.selectedSellerId=null; return renderVendedoresTab(); }
     const assigned = sellerClients(seller.uid).slice().sort((a,b)=>a.name.localeCompare(b.name));
     const sellerSales = sellerNotes(seller.uid).slice().sort((a,b)=>b.date.localeCompare(a.date));
-    const deliveredSales = sellerSales.filter(isDeliveredNote);
+    const deliveredSales = sellerSales.filter(isCollectableNote);
     const pendingOrders = sellerSales.filter(n=>n.fulfillmentStatus==='pedido');
     const sellerCollected = sellerPayments(seller.uid).reduce((sum,p)=>sum+(Number(p.amount)||0),0)
       + deliveredSales.reduce((sum,n)=>sum+(Number(n.paid)||0),0);
@@ -1174,7 +1191,7 @@ function renderVendedoresTab(){
 
   return summary + `<div class="section-title">Selecciona un vendedor</div>` + vendorList.map(s=>{
     const assigned=sellerClients(s.uid);
-    const delivered=sellerNotes(s.uid).filter(isDeliveredNote);
+    const delivered=sellerNotes(s.uid).filter(isCollectableNote);
     const total=delivered.reduce((sum,n)=>sum+(Number(n.total)||0),0);
     return `<div class="card tap" onclick="selectSeller('${s.uid}')">
       <div class="row-between">
@@ -1268,7 +1285,8 @@ function renderVentasTab(){
     const c = getClient(n.clientId);
     const info = statusMap.get(n.id) || { saldo: Math.max(0, Math.round((n.total-(n.paid||0))*100)/100), status:'pendiente' };
     let statusBadge;
-    if(n.fulfillmentStatus==='pedido') statusBadge = `<span class="badge" style="background:#F8E8C7;color:var(--gold-dark);">Pedido pendiente</span>`;
+    if(n.fulfillmentStatus==='pedido') statusBadge = `<span class="badge" style="background:#F8E8C7;color:var(--gold-dark);">${isConsignmentNote(n)?'Pedido en consignación':'Pedido pendiente'}</span>`;
+    else if(isConsignmentNote(n)) statusBadge = `<span class="badge consignment">Consignación</span>`;
     else if(info.status==='pagada') statusBadge = `<span class="badge" style="background:var(--green-bg);color:var(--green);">Pagada</span>`;
     else if(info.status==='parcial') statusBadge = `<span class="badge" style="background:var(--blue-bg);color:var(--blue);">Parcial</span>`;
     else statusBadge = `<span class="badge" style="background:var(--red-bg);color:var(--red);">Pendiente</span>`;
@@ -1461,8 +1479,8 @@ function renderClientDetail(id){
         const info = statusMap.get(n.id) || { saldo: Math.max(0, Math.round((n.total-(n.paid||0))*100)/100) };
         return `<div class="tl-item tap" onclick="openNoteDetail('${n.id}')">
           <div class="tl-date">${fmtDate(n.date)}</div>
-          <div class="tl-head"><span>Nota de venta</span><span class="mono">${fmt(n.total)}</span></div>
-          <div class="tl-sub">${n.items.length} producto(s) ${info.saldo>0.004?`· saldo ${fmt(info.saldo)}`:'· pagada'}</div>
+          <div class="tl-head"><span>${isConsignmentNote(n)?'Consignación':'Nota de venta'}</span><span class="mono">${fmt(n.total)}</span></div>
+          <div class="tl-sub">${n.items.length} producto(s) ${isConsignmentNote(n)?'· sin adeudo':(info.saldo>0.004?`· saldo ${fmt(info.saldo)}`:'· pagada')}</div>
         </div>`;
       } else if(item.type==='pago') {
         const p = item.data;
@@ -1486,7 +1504,7 @@ function renderClientDetail(id){
       <div class="row-between">
         <div>
           <div class="meta">${esc(c.address||'Sin dirección registrada')}</div>
-          <div style="margin-top:4px;">${daysBadges}${c.discount>0?` <span class="badge discount">Descuento fijo -${c.discount}%</span>`:''}</div>
+          <div style="margin-top:4px;"><span class="badge client-type ${c.clientType==='punto_venta'?'pos':'regular'}">${clientTypeLabel(c.clientType)}</span> ${daysBadges}${c.discount>0?` <span class="badge discount">Descuento fijo -${c.discount}%</span>`:''}</div>
         </div>
       </div>
       <div class="visit-panel">
@@ -1565,6 +1583,12 @@ function modalClientForm(){
   const dayChips = DAY_LABELS.map((label,i)=>`<div class="chip ${p.days.includes(i)?'on':''}" onclick="toggleFormDay(${i})">${DAY_SHORT[i]}</div>`).join('');
   return `
     <div class="modal-title"><span>${editing?'Editar cliente':'Nuevo cliente'}</span><button onclick="closeModal()">✕</button></div>
+    <label>Tipo de registro *</label>
+    <select id="f-client-type">
+      <option value="cliente" ${(editing?.clientType||'cliente')==='cliente'?'selected':''}>Cliente</option>
+      <option value="punto_venta" ${(editing?.clientType||'cliente')==='punto_venta'?'selected':''}>Cliente punto de venta</option>
+    </select>
+    <div class="hint">Usa “Punto de venta” para tiendas, distribuidores o negocios que venden tus productos al público.</div>
     <label>Nombre *</label>
     <input type="text" id="f-name" value="${editing?esc(editing.name):''}" placeholder="Nombre del cliente / negocio">
     <label>Teléfono</label>
@@ -1596,6 +1620,7 @@ function submitClientForm(){
   if(!name){ showToast('El nombre es obligatorio'); return; }
   const data = {
     name,
+    clientType: document.getElementById('f-client-type')?.value || 'cliente',
     phone: document.getElementById('f-phone').value.trim(),
     address: document.getElementById('f-address').value.trim(),
     zone: document.getElementById('f-zone').value.trim(),
@@ -1616,6 +1641,7 @@ function openNoteForm(clientId){
     items: [blankItem()],
     paid: 0,
     notes: '',
+    saleType: 'venta',
     extraDiscount: 0,
   });
 }
@@ -1634,6 +1660,7 @@ function syncNoteItemsFromDOM(){
   }));
   p.paid = (document.getElementById('n-paid')||{value:p.paid}).value;
   p.notes = (document.getElementById('n-notes')||{value:p.notes}).value;
+  p.saleType = (document.getElementById('n-sale-type')||{value:p.saleType||'venta'}).value;
   p.clientId = (document.getElementById('n-client')||{value:p.clientId}).value;
   p.date = (document.getElementById('n-date')||{value:p.date}).value;
   p.extraDiscount = (document.getElementById('n-extra-discount')||{value:p.extraDiscount}).value;
@@ -1696,6 +1723,12 @@ function modalNoteForm(){
     ${clientPct>0 ? `<div class="hint">Este cliente tiene un descuento fijo de ${clientPct}% — se aplica automáticamente en todas sus compras.</div>` : ''}
     <label>Fecha</label>
     <input type="date" id="n-date" value="${p.date}">
+    <label>Tipo de operación *</label>
+    <select id="n-sale-type" onchange="onSaleTypeChange(this.value)">
+      <option value="venta" ${(p.saleType||'venta')==='venta'?'selected':''}>Venta normal</option>
+      <option value="consignacion" ${(p.saleType||'venta')==='consignacion'?'selected':''}>Consignación</option>
+    </select>
+    <div class="hint">La consignación descuenta inventario al surtirse, pero no genera adeudo ni permite registrar pago hasta convertirla en venta.</div>
     <label>Productos</label>
     ${sortedCatalog.length===0 ? `<div class="hint" style="margin-bottom:6px;">Aún no tienes productos en tu catálogo. Puedes escribirlos manualmente aquí, o ir a "📦 Catálogo" para guardarlos con precio y no volver a escribirlos.</div>` : ''}
     ${itemRows}
@@ -1707,13 +1740,20 @@ function modalNoteForm(){
     <div class="total-strip"><span>Descuento (<span id="n-discount-pct">${totalPct}</span>%)</span><span class="mono" id="n-discount-value">-${fmt(discountAmount)}</span></div>
     <div class="total-strip" id="n-total-strip"><span>Total de la nota</span><span class="mono" style="font-size:17px;" id="n-total-value">${fmt(total)}</span></div>
     <label>¿Pagó algo en este momento?</label>
-    <input type="number" id="n-paid" min="0" step="any" value="${p.paid}" placeholder="0.00">
+    <input type="number" id="n-paid" min="0" step="any" value="${(p.saleType||'venta')==='consignacion'?0:p.paid}" placeholder="0.00" ${(p.saleType||'venta')==='consignacion'?'disabled':''}>
+    ${(p.saleType||'venta')==='consignacion'?`<div class="hint">Las consignaciones no se cobran al registrarse.</div>`:''}
     <label>Notas (opcional)</label>
     <textarea id="n-notes" placeholder="Comentarios sobre la venta...">${esc(p.notes)}</textarea>
     <div class="btnrow">
       <button class="btn btn-primary btn-block" onclick="submitNoteForm()">Guardar nota de venta</button>
     </div>
   `;
+}
+function onSaleTypeChange(value){
+  syncNoteItemsFromDOM();
+  state.modal.payload.saleType=value;
+  if(value==='consignacion') state.modal.payload.paid=0;
+  renderModal();
 }
 function livePreviewTotal(){
   const p = state.modal.payload;
@@ -1763,21 +1803,26 @@ function submitNoteForm(){
   const extraDiscountPct = Math.min(100, Math.max(0, Number(p.extraDiscount)||0));
   const shortages = getStockShortages(items);
   const isOrder = shortages.length>0;
+  const saleType = p.saleType==='consignacion' ? 'consignacion' : 'venta';
   const note = addNote({
     clientId: p.clientId,
     date: p.date || todayISO(),
     items,
-    paid: isOrder ? 0 : (Number(p.paid)||0),
+    saleType,
+    paid: (isOrder || saleType==='consignacion') ? 0 : (Number(p.paid)||0),
     notes: (p.notes||'').trim(),
     clientDiscountPct,
     extraDiscountPct,
     fulfillmentStatus: isOrder ? 'pedido' : 'entregada',
     inventoryApplied: !isOrder,
+    consignmentStatus: saleType==='consignacion' ? 'activa' : null,
   });
   if(!isOrder) applyInventorySale(items,note.id,note.date);
   closeModal(); renderApp();
   if(isOrder){
-    showToast('Pedido guardado sin cobrar; falta inventario');
+    showToast(saleType==='consignacion' ? 'Pedido en consignación guardado; falta inventario' : 'Pedido guardado sin cobrar; falta inventario');
+  }else if(saleType==='consignacion'){
+    showToast('Consignación guardada sin generar adeudo');
   }else{
     showToast('Nota de venta guardada');
   }
@@ -1804,25 +1849,37 @@ function modalNoteDetail(){
     <div class="total-strip"><span>Descuento (${clientPct>0?`fijo ${clientPct}%`:''}${clientPct>0&&extraPct>0?' + ':''}${extraPct>0?`única vez ${extraPct}%`:''})</span><span class="mono">-${fmt(n.discountAmount||0)}</span></div>
   ` : '';
   const isOrder = n.fulfillmentStatus==='pedido';
-  const statusLabel = isOrder ? 'Pedido pendiente de surtir' : (info.status==='pagada' ? 'Pagada' : info.status==='parcial' ? 'Parcial' : 'Pendiente');
-  const statusColor = isOrder ? 'var(--gold-dark)' : (info.status==='pagada' ? 'var(--green)' : info.status==='pendiente' ? 'var(--red)' : 'var(--blue)');
+  const isConsignment = isConsignmentNote(n);
+  const statusLabel = isOrder ? (isConsignment?'Pedido en consignación pendiente de surtir':'Pedido pendiente de surtir') : (isConsignment ? 'Consignación activa' : (info.status==='pagada' ? 'Pagada' : info.status==='parcial' ? 'Parcial' : 'Pendiente'));
+  const statusColor = (isOrder || isConsignment) ? 'var(--gold-dark)' : (info.status==='pagada' ? 'var(--green)' : info.status==='pendiente' ? 'var(--red)' : 'var(--blue)');
   return `
-    <div class="modal-title"><span>Nota de venta</span><button onclick="closeModal()">✕</button></div>
+    <div class="modal-title"><span>${isConsignment?'Consignación':'Nota de venta'}</span><button onclick="closeModal()">✕</button></div>
     <div class="meta">${esc(c?c.name:'(cliente eliminado)')} · ${fmtDate(n.date)}</div>
     <div style="margin-top:10px;">${itemsHTML}</div>
     ${discountLine}
     <div class="total-strip"><span>Total</span><span class="mono">${fmt(n.total)}</span></div>
-    <div class="total-strip"><span>Pagado en la venta</span><span class="mono">${fmt(n.paid||0)}</span></div>
+    <div class="total-strip"><span>${isConsignment?'Cobrado':'Pagado en la venta'}</span><span class="mono">${fmt(n.paid||0)}</span></div>
     ${isOrder?`<div class="hint" style="background:#F8E8C7;padding:10px;border-radius:8px;margin-top:10px;">Este registro es un pedido. No genera adeudo ni permite cobro hasta que haya inventario y se marque como surtido.</div>`:''}
+    ${isConsignment&&!isOrder?`<div class="hint" style="background:#F8E8C7;padding:10px;border-radius:8px;margin-top:10px;">La mercancía está en consignación. No genera adeudo hasta convertirla en venta.</div>`:''}
     ${info.allocated>0.004?`<div class="total-strip"><span>Abonos posteriores aplicados</span><span class="mono">${fmt(info.allocated)}</span></div>`:''}
     <div class="total-strip"><span>Estado</span><span class="mono" style="color:${statusColor};">${statusLabel}</span></div>
-    <div class="total-strip"><span>Saldo de esta nota</span><span class="mono ${info.saldo>0.004?'owed':'clear'}">${info.saldo>0.004?fmt(info.saldo):'Cubierto'}</span></div>
+    <div class="total-strip"><span>${isConsignment?'Saldo exigible':'Saldo de esta nota'}</span><span class="mono ${(!isConsignment&&info.saldo>0.004)?'owed':'clear'}">${isConsignment?'No genera adeudo':(info.saldo>0.004?fmt(info.saldo):'Cubierto')}</span></div>
     ${n.notes?`<div class="hint" style="margin-top:8px;">${esc(n.notes)}</div>`:''}
     <div class="btnrow">
       ${isOrder?`<button class="btn btn-gold btn-block" onclick="fulfillOrder('${n.id}')">Surtir pedido</button>`:''}
+      ${isConsignment&&!isOrder?`<button class="btn btn-primary btn-block" onclick="convertConsignmentToSale('${n.id}')">Convertir a venta</button>`:''}
       <button class="btn btn-danger btn-block" onclick="confirmDeleteNote('${n.id}')">Eliminar nota</button>
     </div>
   `;
+}
+function convertConsignmentToSale(id){
+  const note=notes.find(n=>n.id===id);
+  if(!note || !isConsignmentNote(note) || note.fulfillmentStatus==='pedido') return;
+  note.saleType='venta';
+  note.consignmentStatus='convertida';
+  note.convertedAt=new Date().toISOString();
+  Object.assign(note,actorFields('updated'));
+  saveNotes(); closeModal(); renderApp(); showToast('Consignación convertida en venta; ya genera adeudo');
 }
 function confirmDeleteNote(id){
   openModal('confirm', {
@@ -2053,6 +2110,7 @@ window.addEventListener('salsamix-auth-change', async event=>{
   currentProfile = event.detail.profile;
   renderAuth();
   if(currentUser && currentProfile){
+    clients=[]; notes=[]; payments=[]; catalog=[]; inventoryMovements=[]; visits=[]; sellers=[];
     loaded = false;
     renderApp();
     await loadAll();

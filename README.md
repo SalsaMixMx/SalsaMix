@@ -76,3 +76,11 @@ La PWA muestra primero datos locales y sincroniza Firebase en segundo plano. Fir
 
 ## Actualizaciones de la PWA
 La app detecta nuevas versiones y muestra un botón **Actualizar ahora**. No es necesario desinstalarla.
+
+
+## Seguridad por vendedor
+Los datos se guardan en colecciones documentales y las reglas de Firestore aplican acceso por UID y rol. Consulta `INSTRUCCIONES-SEGURIDAD-VENDEDOR.md`.
+
+
+## Tipos de cliente y consignación
+Los clientes pueden registrarse como cliente normal o punto de venta. Las notas pueden marcarse como consignación; estas descuentan inventario cuando se surten, pero no generan adeudo hasta convertirse en venta.

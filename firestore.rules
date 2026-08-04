@@ -1,18 +1,106 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() {
-      return request.auth != null;
+    function signedIn() { return request.auth != null; }
+    function initialAdmin() {
+      return signedIn() && request.auth.token.email == 'josegonzalezcarrillo88@gmail.com';
     }
-
-    match /salsamixData/{document} {
-      allow read, write: if signedIn();
+    function userProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    function activeUser() {
+      return signedIn() && (initialAdmin() || userProfile().active == true);
+    }
+    function admin() {
+      return activeUser() && (initialAdmin() || userProfile().role == 'admin');
+    }
+    function ownSeller(sellerId) {
+      return activeUser() && sellerId == request.auth.uid;
     }
 
     match /users/{userId} {
-      allow read: if signedIn();
-      allow create: if signedIn() && request.auth.uid == userId;
-      allow update: if signedIn() && request.auth.uid == userId;
+      allow read: if admin() || (signedIn() && request.auth.uid == userId);
+      allow create: if signedIn() && request.auth.uid == userId
+        && request.resource.data.email == request.auth.token.email
+        && (
+          (initialAdmin() && request.resource.data.role == 'admin') ||
+          (!initialAdmin() && request.resource.data.role == 'vendedor')
+        );
+      allow update: if admin() || (
+        activeUser() && request.auth.uid == userId
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.active == resource.data.active
+        && request.resource.data.email == resource.data.email
+      );
+      allow delete: if admin() && request.auth.uid != userId;
+    }
+
+    match /clients/{clientId} {
+      allow read: if admin() || ownSeller(resource.data.assignedTo);
+      allow create: if admin() || ownSeller(request.resource.data.assignedTo);
+      allow update: if admin() || (
+        ownSeller(resource.data.assignedTo)
+        && request.resource.data.assignedTo == resource.data.assignedTo
+      );
+      allow delete: if admin() || ownSeller(resource.data.assignedTo);
+    }
+
+    match /notes/{noteId} {
+      allow read: if admin() || ownSeller(resource.data.sellerId);
+      allow create: if admin() || ownSeller(request.resource.data.sellerId);
+      allow update: if admin() || (
+        ownSeller(resource.data.sellerId)
+        && request.resource.data.sellerId == resource.data.sellerId
+      );
+      allow delete: if admin() || ownSeller(resource.data.sellerId);
+    }
+
+    match /payments/{paymentId} {
+      allow read: if admin() || ownSeller(resource.data.sellerId);
+      allow create: if admin() || ownSeller(request.resource.data.sellerId);
+      allow update: if admin() || (
+        ownSeller(resource.data.sellerId)
+        && request.resource.data.sellerId == resource.data.sellerId
+      );
+      allow delete: if admin() || ownSeller(resource.data.sellerId);
+    }
+
+    match /visits/{visitId} {
+      allow read: if admin() || ownSeller(resource.data.sellerId);
+      allow create: if admin() || ownSeller(request.resource.data.sellerId);
+      allow update: if admin() || (
+        ownSeller(resource.data.sellerId)
+        && request.resource.data.sellerId == resource.data.sellerId
+      );
+      allow delete: if admin() || ownSeller(resource.data.sellerId);
+    }
+
+    match /catalog/{productId} {
+      allow read: if activeUser();
+      allow create, delete: if admin();
+      allow update: if admin() || (
+        activeUser()
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['stock','updatedAt','updatedBy','updatedByName','updatedByEmail'])
+      );
+    }
+
+    match /inventoryMovements/{movementId} {
+      allow read: if admin() || ownSeller(resource.data.sellerId);
+      allow create: if admin() || ownSeller(request.resource.data.sellerId);
+      allow update, delete: if admin();
+    }
+
+    // La estructura antigua queda disponible únicamente para el administrador durante la migración.
+    match /salsamixData/{document} {
+      allow read, write: if admin();
+    }
+    match /system/{document} {
+      allow read, write: if admin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

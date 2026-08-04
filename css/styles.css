@@ -419,3 +419,10 @@ nav.bottomnav svg{width:23px;height:23px;}
   .pwa-update-close{position:absolute;right:5px;top:5px;width:24px;height:24px;}
   .pwa-update-copy{padding-right:18px;}
 }
+
+
+/* Tipos de cliente y consignación */
+.badge.client-type{vertical-align:middle;margin-left:4px;font-size:9px;}
+.badge.client-type.regular{background:#E8EEF7;color:#355A86;}
+.badge.client-type.pos{background:#F8E8C7;color:var(--gold-dark);}
+.badge.consignment{background:#F8E8C7;color:var(--gold-dark);}
