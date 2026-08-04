@@ -6,6 +6,13 @@ import {
   setDoc,
   onSnapshot,
 } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-firestore.js";
+import {
+  getAuth,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut,
+  sendPasswordResetEmail,
+} from "https://www.gstatic.com/firebasejs/12.17.0/firebase-auth.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyD4NQrruIPkM3JYtf4pGIQm1py9bad9aDA",
@@ -17,8 +24,10 @@ const firebaseConfig = {
   measurementId: "G-EDCK9H3FR2",
 };
 
+const INITIAL_ADMIN_EMAIL = "josegonzalezcarrillo88@gmail.com";
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+const auth = getAuth(app);
 const DATA_COLLECTION = "salsamixData";
 const NAMES = ["clients", "notes", "payments", "catalog", "inventoryMovements"];
 
@@ -58,5 +67,60 @@ function subscribe(callback){
   return () => unsubscribers.forEach(unsubscribe => unsubscribe());
 }
 
+function profileRef(uid){
+  return doc(db, "users", uid);
+}
+
+async function ensureUserProfile(user){
+  const ref = profileRef(user.uid);
+  const snapshot = await getDoc(ref);
+  if(snapshot.exists()) return { uid:user.uid, ...snapshot.data() };
+
+  const email = (user.email || "").toLowerCase();
+  const profile = {
+    name: user.displayName || email.split("@")[0] || "Usuario",
+    email,
+    role: email === INITIAL_ADMIN_EMAIL ? "admin" : "vendedor",
+    active: true,
+    createdAt: new Date().toISOString(),
+  };
+  await setDoc(ref, profile);
+  return { uid:user.uid, ...profile };
+}
+
+async function login(email, password){
+  return signInWithEmailAndPassword(auth, email.trim(), password);
+}
+
+async function logout(){
+  return signOut(auth);
+}
+
+async function resetPassword(email){
+  return sendPasswordResetEmail(auth, email.trim());
+}
+
 window.firebaseStore = { loadAll, save, saveAll, subscribe };
+window.firebaseAuth = { login, logout, resetPassword };
+window.authReady = new Promise(resolve => {
+  onAuthStateChanged(auth, async user => {
+    let profile = null;
+    if(user){
+      try{
+        profile = await ensureUserProfile(user);
+        if(profile.active === false){
+          await signOut(auth);
+          user = null;
+          profile = null;
+        }
+      }catch(error){
+        console.error("No se pudo cargar el perfil:", error);
+      }
+    }
+    window.currentFirebaseUser = user;
+    window.currentUserProfile = profile;
+    window.dispatchEvent(new CustomEvent("salsamix-auth-change", { detail:{ user, profile } }));
+    resolve({ user, profile });
+  });
+});
 window.__resolveFirebaseReady();

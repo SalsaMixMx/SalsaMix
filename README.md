@@ -14,3 +14,7 @@ Si Firestore está vacío, la app intenta importar los datos guardados en el nav
 
 ## Inventario y pedidos
 Las notas con inventario insuficiente se guardan como pedidos pendientes. No generan adeudo ni aceptan cobro hasta surtirse.
+
+
+## Usuarios
+Consulta `CONFIGURAR-USUARIOS.md` para activar Firebase Authentication y las reglas de Firestore.

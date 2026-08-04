@@ -5,6 +5,9 @@ let payments = [];
 let catalog = [];
 let inventoryMovements = [];
 let loaded = false;
+let currentUser = null;
+let currentProfile = null;
+let unsubscribeCloud = null;
 
 const state = {
   tab: 'clientes',
@@ -42,6 +45,84 @@ function paymentMethodLabel(method){
   return labels[method] || 'Método no especificado';
 }
 function mondayIndexToday(){ const j = new Date().getDay(); return j===0?6:j-1; }
+
+/* ---------------- AUTENTICACIÓN ---------------- */
+function currentActor(){
+  return {
+    userId: currentUser ? currentUser.uid : null,
+    userEmail: currentUser ? (currentUser.email || '') : '',
+    userName: currentProfile ? (currentProfile.name || currentProfile.email || 'Usuario') : 'Usuario',
+    userRole: currentProfile ? (currentProfile.role || 'vendedor') : 'vendedor',
+  };
+}
+function actorFields(prefix='created'){
+  const actor = currentActor();
+  return {
+    [`${prefix}By`]: actor.userId,
+    [`${prefix}ByName`]: actor.userName,
+    [`${prefix}ByEmail`]: actor.userEmail,
+    [`${prefix}At`]: new Date().toISOString(),
+  };
+}
+function renderAuth(){
+  const root = document.getElementById('auth-root');
+  const shell = document.getElementById('shell');
+  if(currentUser && currentProfile){
+    root.innerHTML='';
+    shell.style.display='flex';
+    return;
+  }
+  shell.style.display='none';
+  root.innerHTML=`<div class="auth-screen">
+    <div class="auth-card">
+      <div class="auth-brand"><div class="logo">Salsa<span>mix</span></div></div>
+      <div class="auth-title">Iniciar sesión</div>
+      <div class="auth-subtitle">Accede con la cuenta asignada a tu vendedor.</div>
+      <form onsubmit="submitLogin(event)">
+        <label>Correo electrónico</label>
+        <input id="login-email" type="email" autocomplete="username" required placeholder="vendedor@empresa.com">
+        <label>Contraseña</label>
+        <input id="login-password" type="password" autocomplete="current-password" required minlength="6" placeholder="••••••••">
+        <div id="login-error" class="auth-error"></div>
+        <button id="login-button" class="btn btn-primary btn-block" type="submit" style="margin-top:14px;">Entrar</button>
+        <button class="btn btn-outline btn-block" type="button" style="margin-top:8px;" onclick="requestPasswordReset()">Olvidé mi contraseña</button>
+      </form>
+      <div class="auth-help">Las cuentas se crean desde Firebase Authentication. La primera cuenta administradora es <strong>josegonzalezcarrillo88@gmail.com</strong>.</div>
+    </div>
+  </div>`;
+}
+async function submitLogin(event){
+  event.preventDefault();
+  const email=document.getElementById('login-email').value.trim();
+  const password=document.getElementById('login-password').value;
+  const button=document.getElementById('login-button');
+  const errorBox=document.getElementById('login-error');
+  button.disabled=true; button.textContent='Entrando...'; errorBox.style.display='none';
+  try{
+    await window.firebaseAuth.login(email,password);
+  }catch(error){
+    const messages={
+      'auth/invalid-credential':'Correo o contraseña incorrectos.',
+      'auth/user-disabled':'Esta cuenta está desactivada.',
+      'auth/too-many-requests':'Demasiados intentos. Espera unos minutos.',
+      'auth/network-request-failed':'No hay conexión a internet.'
+    };
+    errorBox.textContent=messages[error.code]||'No se pudo iniciar sesión.';
+    errorBox.style.display='block';
+  }finally{
+    button.disabled=false; button.textContent='Entrar';
+  }
+}
+async function requestPasswordReset(){
+  const email=(document.getElementById('login-email')?.value||'').trim();
+  if(!email){ showToast('Escribe primero tu correo'); return; }
+  try{ await window.firebaseAuth.resetPassword(email); showToast('Enviamos el enlace de recuperación'); }
+  catch(error){ showToast('No se pudo enviar el enlace'); }
+}
+async function logoutUser(){
+  try{ await window.firebaseAuth.logout(); }
+  catch(error){ showToast('No se pudo cerrar la sesión'); }
+}
 
 /* ---------------- STORAGE / FIREBASE ---------------- */
 const STORAGE_KEYS = {
@@ -96,7 +177,8 @@ async function loadAll(){
     saveLocalBackup(STORAGE_KEYS.catalog, catalog);
     saveLocalBackup(STORAGE_KEYS.inventoryMovements, inventoryMovements);
 
-    window.firebaseStore.subscribe((data)=>{
+    if(unsubscribeCloud) unsubscribeCloud();
+    unsubscribeCloud = window.firebaseStore.subscribe((data)=>{
       if(data.clients) clients = data.clients;
       if(data.notes) notes = data.notes;
       if(data.payments) payments = data.payments;
@@ -169,7 +251,7 @@ function getStockShortages(items){
   }).filter(Boolean);
 }
 function addInventoryMovement(productId, type, quantity, details={}){
-  inventoryMovements.push({ id:uid(), productId, type, quantity:Number(quantity)||0, date:details.date||todayISO(), createdAt:new Date().toISOString(), noteId:details.noteId||null, reason:details.reason||'' });
+  inventoryMovements.push({ id:uid(), productId, type, quantity:Number(quantity)||0, date:details.date||todayISO(), createdAt:new Date().toISOString(), noteId:details.noteId||null, reason:details.reason||'', ...actorFields('created') });
 }
 function applyInventorySale(items, noteId, date){
   (items||[]).forEach(item=>{
@@ -310,9 +392,9 @@ function computeCategoryStats(productStats){
 function addOrUpdateClient(data, id){
   if(id){
     const c = getClient(id);
-    Object.assign(c, data);
+    Object.assign(c, data, actorFields('updated'));
   } else {
-    clients.push({ id: uid(), createdAt: todayISO(), ...data });
+    clients.push({ id: uid(), createdAt: todayISO(), ...data, ...actorFields('created') });
   }
   saveClients();
 }
@@ -333,6 +415,7 @@ function addNote(data){
     subtotal: Math.round(subtotal*100)/100,
     discountAmount: Math.round(discountAmount*100)/100,
     total: Math.round(total*100)/100,
+    ...actorFields('created'),
   };
   notes.push(note);
   saveNotes();
@@ -344,10 +427,10 @@ function deleteNote(id){
   notes = notes.filter(n=>n.id!==id);
   saveNotes();
 }
-function addPayment(data){ payments.push({ id: uid(), ...data }); savePayments(); }
+function addPayment(data){ payments.push({ id: uid(), ...data, ...actorFields('created') }); savePayments(); }
 function deletePayment(id){ payments = payments.filter(p=>p.id!==id); savePayments(); }
-function addProduct(data){ catalog.push({ id: uid(), cost:0, stock:0, minStock:0, ...data }); saveCatalog(); }
-function updateProduct(id, data){ const p = catalog.find(x=>x.id===id); if(p) Object.assign(p, data); saveCatalog(); }
+function addProduct(data){ catalog.push({ id: uid(), cost:0, stock:0, minStock:0, ...data, ...actorFields('created') }); saveCatalog(); }
+function updateProduct(id, data){ const p = catalog.find(x=>x.id===id); if(p) Object.assign(p, data, actorFields('updated')); saveCatalog(); }
 function deleteProduct(id){ catalog = catalog.filter(p=>p.id!==id); saveCatalog(); }
 
 /* ---------------- ICONS ---------------- */
@@ -381,9 +464,12 @@ function renderHeader(){
     return;
   }
   const titles = { clientes:'Mi Ruta', rutas:'Rutas de la semana', ventas:'Notas de venta', adeudos:'Adeudos', reportes:'Ventas por producto', inventario:'Inventario' };
+  const userName = currentProfile ? (currentProfile.name || currentProfile.email || 'Usuario') : 'Usuario';
+  const userRole = currentProfile ? (currentProfile.role || 'vendedor') : 'vendedor';
   el.innerHTML = `
     ${brandBar}
     <div class="brand stamp">${titles[state.tab]}<small>Libreta digital de ventas</small><div class="sync-status">☁ Sincronización Firebase</div></div>
+    <div class="userbar"><div class="userbar-info"><div class="userbar-name">${esc(userName)}</div><div class="userbar-role">${esc(userRole)}</div></div><button class="logout-btn" onclick="logoutUser()">Salir</button></div>
     ${state.tab==='clientes' ? `<div class="search-wrap"><input type="text" placeholder="Buscar cliente..." value="${esc(state.search)}" oninput="onSearchInput(this.value)"></div>` : ''}
   `;
 }
@@ -1205,9 +1291,34 @@ function modalConfirm(){
 function runConfirmAction(){ if(window.__confirmAction) window.__confirmAction(); }
 
 /* ---------------- INIT ---------------- */
+window.addEventListener('salsamix-auth-change', async event=>{
+  currentUser = event.detail.user;
+  currentProfile = event.detail.profile;
+  renderAuth();
+  if(currentUser && currentProfile){
+    loaded = false;
+    renderApp();
+    await loadAll();
+    state.routeDay = String(mondayIndexToday());
+    renderApp();
+  }else{
+    loaded = false;
+    clients=[]; notes=[]; payments=[]; catalog=[]; inventoryMovements=[];
+    if(unsubscribeCloud){ unsubscribeCloud(); unsubscribeCloud=null; }
+  }
+});
+
 (async function init(){
-  renderApp();
-  await loadAll();
-  state.routeDay = String(mondayIndexToday());
-  renderApp();
+  renderAuth();
+  await window.firebaseReady;
+  const authState = await window.authReady;
+  currentUser = authState.user;
+  currentProfile = authState.profile;
+  renderAuth();
+  if(currentUser && currentProfile){
+    renderApp();
+    await loadAll();
+    state.routeDay = String(mondayIndexToday());
+    renderApp();
+  }
 })();

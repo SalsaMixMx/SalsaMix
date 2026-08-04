@@ -185,3 +185,26 @@
 /* Inventario */
 nav.bottomnav button{min-width:0;}
 @media(max-width:420px){nav.bottomnav button{font-size:9px;padding-left:0;padding-right:0;}nav.bottomnav svg{width:19px;height:19px;}}
+
+
+/* AUTENTICACIÓN Y USUARIOS */
+.auth-screen{
+  position:fixed;inset:0;z-index:100;background:var(--paper);display:flex;
+  align-items:center;justify-content:center;padding:22px;
+}
+.auth-card{
+  width:100%;max-width:410px;background:var(--white);border:1px solid var(--paper-line);
+  border-radius:18px;padding:24px;box-shadow:0 14px 45px rgba(78,19,16,.16);
+}
+.auth-brand{background:var(--cover);color:var(--paper);margin:-24px -24px 20px;padding:22px 24px;border-radius:18px 18px 0 0;}
+.auth-brand .logo{font-family:'Pacifico',cursive;font-size:30px;line-height:1;}
+.auth-brand .logo span{font-family:-apple-system,sans-serif;color:var(--gold);font-size:14px;font-weight:800;}
+.auth-title{font-family:Georgia,'Times New Roman',serif;font-size:25px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;margin-bottom:5px;}
+.auth-subtitle{font-size:13px;color:var(--ink-light);margin-bottom:16px;}
+.auth-error{background:var(--red-bg);color:var(--red);border-radius:8px;padding:9px 10px;font-size:12.5px;margin:10px 0;display:none;}
+.auth-help{background:var(--blue-bg);color:var(--blue);border-radius:8px;padding:10px;font-size:11.5px;line-height:1.45;margin-top:14px;}
+.userbar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.18);}
+.userbar-info{min-width:0;}
+.userbar-name{font-size:11px;font-weight:800;color:var(--paper);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.userbar-role{font-size:9.5px;color:var(--gold);text-transform:uppercase;letter-spacing:.08em;font-weight:800;}
+.logout-btn{background:transparent;border:1px solid rgba(255,255,255,.35);color:var(--paper);border-radius:7px;padding:5px 8px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;}
