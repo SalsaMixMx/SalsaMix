@@ -53,6 +53,29 @@ function paymentMethodLabel(method){
   };
   return labels[method] || 'Método no especificado';
 }
+function noteFolio(note){
+  if(note?.folio) return note.folio;
+  const year=(note?.date||todayISO()).slice(0,4) || String(new Date().getFullYear());
+  const source=String(note?.id||'').replace(/[^a-z0-9]/gi,'').toUpperCase();
+  const suffix=(source.slice(-6)||'000001').padStart(6,'0');
+  const prefix=isConsignmentNote(note) ? 'C' : (note?.fulfillmentStatus==='pedido' ? 'P' : 'V');
+  return `${prefix}-${year}-${suffix}`;
+}
+function nextNoteFolio(data){
+  const year=(data.date||todayISO()).slice(0,4);
+  const prefix=data.saleType==='consignacion' ? 'C' : (data.fulfillmentStatus==='pedido' ? 'P' : 'V');
+  const used=notes
+    .filter(n=>(n.date||'').startsWith(year))
+    .map(n=>String(n.folio||''))
+    .filter(f=>f.startsWith(prefix+'-'+year+'-'))
+    .map(f=>Number(f.split('-').pop())||0);
+  const next=(Math.max(0,...used)+1).toString().padStart(6,'0');
+  return `${prefix}-${year}-${next}`;
+}
+function formatTicketDate(note){
+  const source=note?.createdAt || note?.createdAtISO || (note?.date ? `${note.date}T12:00:00` : new Date().toISOString());
+  return new Date(source).toLocaleString('es-MX',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+}
 function mondayIndexToday(){ const j = new Date().getDay(); return j===0?6:j-1; }
 
 /* ---------------- AUTENTICACIÓN ---------------- */
@@ -791,6 +814,7 @@ function addNote(data){
   const note = {
     id: uid(),
     ...data,
+    folio: data.folio || nextNoteFolio(data),
     sellerId:data.sellerId || client?.assignedTo || currentUser?.uid || null,
     subtotal: Math.round(subtotal*100)/100,
     discountAmount: Math.round(discountAmount*100)/100,
@@ -1855,6 +1879,7 @@ function modalNoteDetail(){
   return `
     <div class="modal-title"><span>${isConsignment?'Consignación':'Nota de venta'}</span><button onclick="closeModal()">✕</button></div>
     <div class="meta">${esc(c?c.name:'(cliente eliminado)')} · ${fmtDate(n.date)}</div>
+    <div class="hint" style="margin-top:4px;">Folio: <strong class="mono">${esc(noteFolio(n))}</strong></div>
     <div style="margin-top:10px;">${itemsHTML}</div>
     ${discountLine}
     <div class="total-strip"><span>Total</span><span class="mono">${fmt(n.total)}</span></div>
@@ -1868,10 +1893,71 @@ function modalNoteDetail(){
     <div class="btnrow">
       ${isOrder?`<button class="btn btn-gold btn-block" onclick="fulfillOrder('${n.id}')">Surtir pedido</button>`:''}
       ${isConsignment&&!isOrder?`<button class="btn btn-primary btn-block" onclick="convertConsignmentToSale('${n.id}')">Convertir a venta</button>`:''}
+      <button class="btn btn-outline btn-block" onclick="printNoteTicket('${n.id}','58')">🖨 Ticket 58 mm</button>
+      <button class="btn btn-outline btn-block" onclick="printNoteTicket('${n.id}','80')">🖨 Ticket 80 mm / PDF</button>
       <button class="btn btn-danger btn-block" onclick="confirmDeleteNote('${n.id}')">Eliminar nota</button>
     </div>
   `;
 }
+function printNoteTicket(id,width='80'){
+  const note=notes.find(n=>n.id===id);
+  if(!note){ showToast('No se encontró la nota'); return; }
+  const client=getClient(note.clientId);
+  const info=computeEffectiveNoteStatuses().get(note.id) || {saldo:Math.max(0,(Number(note.total)||0)-(Number(note.paid)||0)),status:'pendiente'};
+  const isOrder=note.fulfillmentStatus==='pedido';
+  const isConsignment=isConsignmentNote(note);
+  const operationTitle=isOrder ? (isConsignment?'PEDIDO EN CONSIGNACIÓN':'PEDIDO') : (isConsignment?'CONSIGNACIÓN':'VENTA');
+  const statusText=isOrder ? 'PENDIENTE DE SURTIR' : (isConsignment?'NO GENERA ADEUDO':(info.saldo>0.004?`SALDO ${fmt(info.saldo)}`:'PAGADA'));
+  const seller=note.createdByName || sellerName(note.sellerId) || currentProfile?.name || currentUser?.email || 'Sin especificar';
+  const items=(note.items||[]).map(item=>{
+    const qty=Number(item.qty)||0, price=Number(item.price)||0;
+    return `<tr><td class="desc">${esc(item.desc||'Producto')}<div class="unit">${qty} × ${fmt(price)}</div></td><td class="amount">${fmt(qty*price)}</td></tr>`;
+  }).join('');
+  const logoUrl=new URL('assets/img/logo-full.png',window.location.href).href;
+  const pageWidth=width==='58'?'58mm':'80mm';
+  const contentWidth=width==='58'?'50mm':'72mm';
+  const ticketWindow=window.open('','_blank','noopener,noreferrer,width=480,height=720');
+  if(!ticketWindow){ showToast('Permite ventanas emergentes para imprimir'); return; }
+  const html=`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(noteFolio(note))}</title>
+  <style>
+    @page{size:${pageWidth} auto;margin:2mm;}
+    *{box-sizing:border-box}html,body{margin:0;padding:0;background:#fff;color:#000}body{font-family:Arial,Helvetica,sans-serif;font-size:${width==='58'?'10px':'11px'};line-height:1.3}
+    .ticket{width:${contentWidth};margin:0 auto;padding:2mm 0}.logo{display:block;max-width:${width==='58'?'38mm':'48mm'};max-height:18mm;object-fit:contain;margin:0 auto 2mm;filter:grayscale(1) contrast(1.4)}
+    .center{text-align:center}.title{font-size:${width==='58'?'15px':'17px'};font-weight:800;letter-spacing:.08em}.folio{font-weight:800;margin-top:1mm}.line{border-top:1px dashed #000;margin:2mm 0}
+    .info{margin:.8mm 0}.label{font-weight:700}.items{width:100%;border-collapse:collapse}.items td{vertical-align:top;padding:1mm 0;border-bottom:1px dotted #aaa}.desc{padding-right:2mm}.unit{font-size:.9em;color:#333}.amount{text-align:right;white-space:nowrap;font-weight:700}
+    .totals{width:100%;border-collapse:collapse}.totals td{padding:.6mm 0}.totals td:last-child{text-align:right;white-space:nowrap}.grand td{font-size:1.18em;font-weight:800;border-top:1px solid #000;padding-top:1.2mm}
+    .notice{border:1px solid #000;padding:1.5mm;text-align:center;font-weight:700;margin:2mm 0}.notes{white-space:pre-wrap;margin-top:1mm}.footer{text-align:center;margin-top:3mm;font-size:.9em}
+    @media print{.ticket{margin:0}.no-print{display:none!important}}
+  </style></head><body><section class="ticket">
+    <img class="logo" src="${logoUrl}" alt="SalsaMix">
+    <div class="center title">${operationTitle}</div>
+    <div class="center folio">${esc(noteFolio(note))}</div>
+    <div class="center">${esc(formatTicketDate(note))}</div>
+    <div class="line"></div>
+    <div class="info"><span class="label">Cliente:</span> ${esc(client?.name||'Cliente eliminado')}</div>
+    ${client?.ownerName?`<div class="info"><span class="label">Encargado:</span> ${esc(client.ownerName)}</div>`:''}
+    <div class="info"><span class="label">Vendedor:</span> ${esc(seller)}</div>
+    <div class="line"></div>
+    <table class="items"><tbody>${items}</tbody></table>
+    <div class="line"></div>
+    <table class="totals"><tbody>
+      <tr><td>Subtotal</td><td>${fmt(note.subtotal!=null?note.subtotal:note.total)}</td></tr>
+      ${(Number(note.discountAmount)||0)>0?`<tr><td>Descuento</td><td>-${fmt(note.discountAmount)}</td></tr>`:''}
+      <tr class="grand"><td>TOTAL</td><td>${fmt(note.total)}</td></tr>
+      <tr><td>Pago inicial</td><td>${fmt(note.paid||0)}</td></tr>
+      ${!isConsignment&&!isOrder?`<tr><td>Saldo</td><td>${fmt(info.saldo||0)}</td></tr>`:''}
+    </tbody></table>
+    <div class="notice">${esc(statusText)}</div>
+    ${note.notes?`<div><span class="label">Observaciones:</span><div class="notes">${esc(note.notes)}</div></div>`:''}
+    ${isConsignment?`<div class="footer">Mercancía entregada en consignación. No genera adeudo hasta convertirse en venta.</div>`:''}
+    ${isOrder?`<div class="footer">Documento pendiente de surtir.</div>`:''}
+    <div class="line"></div><div class="footer">Gracias por su preferencia<br>SalsaMix</div>
+  </section><script>window.addEventListener('load',()=>{setTimeout(()=>window.print(),250)});<\/script></body></html>`;
+  ticketWindow.document.open();
+  ticketWindow.document.write(html);
+  ticketWindow.document.close();
+}
+
 function convertConsignmentToSale(id){
   const note=notes.find(n=>n.id===id);
   if(!note || !isConsignmentNote(note) || note.fulfillmentStatus==='pedido') return;

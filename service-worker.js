@@ -1,4 +1,4 @@
-const CACHE_NAME = 'salsamix-pwa-v3.0.0-auto-update';
+const CACHE_NAME = 'salsamix-ticket-v1';
 const APP_SHELL = [
   './',
   './index.html',
