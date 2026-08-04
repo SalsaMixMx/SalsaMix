@@ -813,7 +813,7 @@ function renderHeader(){
       </div>`;
     return;
   }
-  const titles = { clientes:'Mi Ruta', rutas:'Rutas de la semana', ventas:'Notas de venta', adeudos:'Adeudos', reportes:'Ventas por producto', inventario:'Inventario', vendedores:'Vendedores', mapa:'Mapa de clientes' };
+  const titles = { clientes:'Clientes', rutas:'Rutas de la semana', ventas:'Notas de venta', adeudos:'Por cobrar', reportes:'Ventas por producto', inventario:'Inventario', vendedores:'Vendedores', mapa:'Mapa de clientes' };
   const userName = currentProfile ? (currentProfile.name || currentProfile.email || 'Usuario') : 'Usuario';
   const userRole = currentProfile ? (currentProfile.role || 'vendedor') : 'vendedor';
   el.innerHTML = `
