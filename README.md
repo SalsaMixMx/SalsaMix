@@ -88,3 +88,11 @@ Los clientes pueden registrarse como cliente normal o punto de venta. Las notas 
 
 ## Impresión de tickets
 Cada nota incluye botones para imprimir en 58 mm, 80 mm o guardar como PDF desde el diálogo de impresión. Las notas nuevas reciben un folio automático.
+
+
+## Tickets corregidos
+La impresión se realiza dentro de la aplicación para evitar páginas en blanco en Safari y PWA.
+
+
+## Tickets v2
+Impresión rápida mediante un documento aislado, con diseño compacto para 58 mm y 80 mm/PDF.

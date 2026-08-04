@@ -1,4 +1,4 @@
-const CACHE_NAME = 'salsamix-ticket-v1';
+const CACHE_NAME = 'salsamix-ticket-v99';
 const APP_SHELL = [
   './',
   './index.html',
@@ -7,6 +7,7 @@ const APP_SHELL = [
   './js/app.js',
   './js/firebase.js',
   './assets/img/logo-header.png',
+  './assets/img/logo-ticket.png',
   './assets/img/logo-full.png',
   './assets/icons/icon-192.png',
   './assets/icons/icon-512.png',
