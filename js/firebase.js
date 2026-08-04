@@ -20,7 +20,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const DATA_COLLECTION = "salsamixData";
-const NAMES = ["clients", "notes", "payments", "catalog"];
+const NAMES = ["clients", "notes", "payments", "catalog", "inventoryMovements"];
 
 function dataRef(name){
   return doc(db, DATA_COLLECTION, name);

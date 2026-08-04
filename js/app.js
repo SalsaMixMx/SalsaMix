@@ -3,6 +3,7 @@ let clients = [];
 let notes = [];
 let payments = [];
 let catalog = [];
+let inventoryMovements = [];
 let loaded = false;
 
 const state = {
@@ -48,6 +49,7 @@ const STORAGE_KEYS = {
   notes: 'notes-data',
   payments: 'payments-data',
   catalog: 'catalog-data',
+  inventoryMovements: 'inventory-movements-data',
 };
 
 async function readLegacyValue(key){
@@ -78,24 +80,28 @@ async function loadAll(){
       notes = cloud.notes || [];
       payments = cloud.payments || [];
       catalog = cloud.catalog || [];
+      inventoryMovements = cloud.inventoryMovements || [];
     }else{
       clients = await readLegacyValue(STORAGE_KEYS.clients);
       notes = await readLegacyValue(STORAGE_KEYS.notes);
       payments = await readLegacyValue(STORAGE_KEYS.payments);
       catalog = await readLegacyValue(STORAGE_KEYS.catalog);
-      await window.firebaseStore.saveAll({clients, notes, payments, catalog});
+      inventoryMovements = await readLegacyValue(STORAGE_KEYS.inventoryMovements);
+      await window.firebaseStore.saveAll({clients, notes, payments, catalog, inventoryMovements});
     }
 
     saveLocalBackup(STORAGE_KEYS.clients, clients);
     saveLocalBackup(STORAGE_KEYS.notes, notes);
     saveLocalBackup(STORAGE_KEYS.payments, payments);
     saveLocalBackup(STORAGE_KEYS.catalog, catalog);
+    saveLocalBackup(STORAGE_KEYS.inventoryMovements, inventoryMovements);
 
     window.firebaseStore.subscribe((data)=>{
       if(data.clients) clients = data.clients;
       if(data.notes) notes = data.notes;
       if(data.payments) payments = data.payments;
       if(data.catalog) catalog = data.catalog;
+      if(data.inventoryMovements) inventoryMovements = data.inventoryMovements;
       if(loaded) renderApp();
     });
   }catch(e){
@@ -104,6 +110,7 @@ async function loadAll(){
     notes = await readLegacyValue(STORAGE_KEYS.notes);
     payments = await readLegacyValue(STORAGE_KEYS.payments);
     catalog = await readLegacyValue(STORAGE_KEYS.catalog);
+    inventoryMovements = await readLegacyValue(STORAGE_KEYS.inventoryMovements);
     showToast('Firebase no respondió; usando respaldo local');
   }
   loaded = true;
@@ -123,6 +130,7 @@ async function saveClients(){ return saveCollection('clients', clients, STORAGE_
 async function saveNotes(){ return saveCollection('notes', notes, STORAGE_KEYS.notes); }
 async function savePayments(){ return saveCollection('payments', payments, STORAGE_KEYS.payments); }
 async function saveCatalog(){ return saveCollection('catalog', catalog, STORAGE_KEYS.catalog); }
+async function saveInventoryMovements(){ return saveCollection('inventoryMovements', inventoryMovements, STORAGE_KEYS.inventoryMovements); }
 
 function showToast(msg){
   const root = document.getElementById('toast-root');
@@ -132,13 +140,58 @@ function showToast(msg){
 
 /* ---------------- DATA HELPERS ---------------- */
 function getClient(id){ return clients.find(c=>c.id===id); }
+function isDeliveredNote(note){ return note.fulfillmentStatus !== 'pedido'; }
 function notesFor(id){ return notes.filter(n=>n.clientId===id).sort((a,b)=> b.date.localeCompare(a.date)); }
 function paymentsFor(id){ return payments.filter(p=>p.clientId===id).sort((a,b)=> b.date.localeCompare(a.date)); }
 function balanceFor(id){
-  const totalVentas = notes.filter(n=>n.clientId===id).reduce((s,n)=>s+n.total,0);
-  const totalPagadoVenta = notes.filter(n=>n.clientId===id).reduce((s,n)=>s+(n.paid||0),0);
+  const collectableNotes = notes.filter(n=>n.clientId===id && isDeliveredNote(n));
+  const totalVentas = collectableNotes.reduce((s,n)=>s+n.total,0);
+  const totalPagadoVenta = collectableNotes.reduce((s,n)=>s+(n.paid||0),0);
   const totalAbonos = payments.filter(p=>p.clientId===id).reduce((s,p)=>s+p.amount,0);
   return Math.round((totalVentas - totalPagadoVenta - totalAbonos)*100)/100;
+}
+function productStock(product){ return Math.max(0, Number(product && product.stock)||0); }
+function productMinStock(product){ return Math.max(0, Number(product && product.minStock)||0); }
+function stockStatus(product){
+  const stock = productStock(product);
+  if(stock<=0) return {label:'Agotado', color:'var(--red)', bg:'var(--red-bg)'};
+  if(stock<=productMinStock(product)) return {label:'Stock bajo', color:'var(--gold-dark)', bg:'#F8E8C7'};
+  return {label:'Disponible', color:'var(--green)', bg:'var(--green-bg)'};
+}
+function getStockShortages(items){
+  return (items||[]).map(item=>{
+    if(!item.catalogId) return null;
+    const product = catalog.find(p=>p.id===item.catalogId);
+    if(!product) return null;
+    const requested = Number(item.qty)||0;
+    const available = productStock(product);
+    return requested>available ? {product, requested, available} : null;
+  }).filter(Boolean);
+}
+function addInventoryMovement(productId, type, quantity, details={}){
+  inventoryMovements.push({ id:uid(), productId, type, quantity:Number(quantity)||0, date:details.date||todayISO(), createdAt:new Date().toISOString(), noteId:details.noteId||null, reason:details.reason||'' });
+}
+function applyInventorySale(items, noteId, date){
+  (items||[]).forEach(item=>{
+    if(!item.catalogId) return;
+    const product = catalog.find(p=>p.id===item.catalogId);
+    if(!product) return;
+    const qty = Number(item.qty)||0;
+    product.stock = Math.max(0, productStock(product)-qty);
+    addInventoryMovement(product.id, 'venta', -qty, {noteId, date, reason:'Salida por venta'});
+  });
+  saveCatalog(); saveInventoryMovements();
+}
+function restoreInventorySale(items, noteId, date){
+  (items||[]).forEach(item=>{
+    if(!item.catalogId) return;
+    const product = catalog.find(p=>p.id===item.catalogId);
+    if(!product) return;
+    const qty = Number(item.qty)||0;
+    product.stock = productStock(product)+qty;
+    addInventoryMovement(product.id, 'cancelacion', qty, {noteId, date, reason:'Devolución por nota eliminada'});
+  });
+  saveCatalog(); saveInventoryMovements();
 }
 function totalAdeudoGlobal(){ return clients.reduce((s,c)=>s+Math.max(0,balanceFor(c.id)),0); }
 
@@ -147,9 +200,10 @@ function totalAdeudoGlobal(){ return clients.reduce((s,c)=>s+Math.max(0,balanceF
    quede cubierto (ya sea porque se pagó al momento o porque un abono posterior la cubrió). */
 function computeEffectiveNoteStatuses(){
   const map = new Map();
-  const clientIds = Array.from(new Set(notes.map(n=>n.clientId)));
+  const deliveredNotes = notes.filter(isDeliveredNote);
+  const clientIds = Array.from(new Set(deliveredNotes.map(n=>n.clientId)));
   clientIds.forEach(cid=>{
-    const clientNotes = notes.filter(n=>n.clientId===cid).slice().sort((a,b)=> a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+    const clientNotes = deliveredNotes.filter(n=>n.clientId===cid).slice().sort((a,b)=> a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
     let pool = payments.filter(p=>p.clientId===cid).reduce((s,p)=>s+(Number(p.amount)||0),0);
     clientNotes.forEach(n=>{
       const basePaid = Number(n.paid)||0;
@@ -185,7 +239,7 @@ function computeProductStats(){
     });
   });
 
-  notes.forEach(note=>{
+  notes.filter(isDeliveredNote).forEach(note=>{
     const client = getClient(note.clientId);
     const clientKey = note.clientId || 'cliente-eliminado';
     const clientName = client ? client.name : 'Cliente eliminado';
@@ -273,19 +327,26 @@ function addNote(data){
   const discountPct = Math.min(100, (Number(data.clientDiscountPct)||0) + (Number(data.extraDiscountPct)||0));
   const discountAmount = subtotal * discountPct/100;
   const total = subtotal - discountAmount;
-  notes.push({
+  const note = {
     id: uid(),
     ...data,
     subtotal: Math.round(subtotal*100)/100,
     discountAmount: Math.round(discountAmount*100)/100,
     total: Math.round(total*100)/100,
-  });
+  };
+  notes.push(note);
+  saveNotes();
+  return note;
+}
+function deleteNote(id){
+  const note = notes.find(n=>n.id===id);
+  if(note && note.inventoryApplied) restoreInventorySale(note.items, note.id, todayISO());
+  notes = notes.filter(n=>n.id!==id);
   saveNotes();
 }
-function deleteNote(id){ notes = notes.filter(n=>n.id!==id); saveNotes(); }
 function addPayment(data){ payments.push({ id: uid(), ...data }); savePayments(); }
 function deletePayment(id){ payments = payments.filter(p=>p.id!==id); savePayments(); }
-function addProduct(data){ catalog.push({ id: uid(), ...data }); saveCatalog(); }
+function addProduct(data){ catalog.push({ id: uid(), cost:0, stock:0, minStock:0, ...data }); saveCatalog(); }
 function updateProduct(id, data){ const p = catalog.find(x=>x.id===id); if(p) Object.assign(p, data); saveCatalog(); }
 function deleteProduct(id){ catalog = catalog.filter(p=>p.id!==id); saveCatalog(); }
 
@@ -297,6 +358,7 @@ const ICONS = {
   ventas: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/></svg>',
   adeudos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5c0-1.4 1.2-2 2.5-2s2.5.7 2.5 2c0 3-5 1.7-5 4.7 0 1.3 1.2 2.3 2.5 2.3s2.5-.7 2.5-2"/></svg>',
   reportes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
+  inventario: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7l8-4 8 4-8 4-8-4z"/><path d="M4 7v10l8 4 8-4V7"/><path d="M12 11v10"/></svg>',
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
   phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 4h3l1.5 4-2 1.5a12 12 0 0 0 5.5 5.5l1.5-2 4 1.5v3c0 1-1 2-2 2-8 0-14-6-14-14 0-1 1-2 2-2z"/></svg>',
@@ -318,7 +380,7 @@ function renderHeader(){
       </div>`;
     return;
   }
-  const titles = { clientes:'Mi Ruta', rutas:'Rutas de la semana', ventas:'Notas de venta', adeudos:'Adeudos', reportes:'Ventas por producto' };
+  const titles = { clientes:'Mi Ruta', rutas:'Rutas de la semana', ventas:'Notas de venta', adeudos:'Adeudos', reportes:'Ventas por producto', inventario:'Inventario' };
   el.innerHTML = `
     ${brandBar}
     <div class="brand stamp">${titles[state.tab]}<small>Libreta digital de ventas</small><div class="sync-status">☁ Sincronización Firebase</div></div>
@@ -329,7 +391,7 @@ function renderHeader(){
 /* ---------------- RENDER: BOTTOM NAV ---------------- */
 function renderBottomNav(){
   const el = document.getElementById('bottomnav');
-  const tabs = [['clientes','Clientes'],['rutas','Rutas'],['ventas','Ventas'],['adeudos','Adeudos'],['reportes','Productos']];
+  const tabs = [['clientes','Clientes'],['rutas','Rutas'],['ventas','Ventas'],['adeudos','Adeudos'],['reportes','Productos'],['inventario','Inventario']];
   el.innerHTML = tabs.map(([key,label])=>`
     <button class="${state.tab===key?'active':''}" onclick="setTab('${key}')">
       ${ICONS[key]}<span>${label}</span>
@@ -361,6 +423,7 @@ function renderApp(){
   else if(state.tab==='ventas') el.innerHTML = renderVentasTab();
   else if(state.tab==='adeudos') el.innerHTML = renderAdeudosTab();
   else if(state.tab==='reportes') el.innerHTML = renderReportesTab();
+  else if(state.tab==='inventario') el.innerHTML = renderInventarioTab();
 }
 
 function setTab(tab){ state.tab = tab; state.clientDetailId = null; renderApp(); }
@@ -450,7 +513,8 @@ function renderVentasTab(){
     const c = getClient(n.clientId);
     const info = statusMap.get(n.id) || { saldo: Math.max(0, Math.round((n.total-(n.paid||0))*100)/100), status:'pendiente' };
     let statusBadge;
-    if(info.status==='pagada') statusBadge = `<span class="badge" style="background:var(--green-bg);color:var(--green);">Pagada</span>`;
+    if(n.fulfillmentStatus==='pedido') statusBadge = `<span class="badge" style="background:#F8E8C7;color:var(--gold-dark);">Pedido pendiente</span>`;
+    else if(info.status==='pagada') statusBadge = `<span class="badge" style="background:var(--green-bg);color:var(--green);">Pagada</span>`;
     else if(info.status==='parcial') statusBadge = `<span class="badge" style="background:var(--blue-bg);color:var(--blue);">Parcial</span>`;
     else statusBadge = `<span class="badge" style="background:var(--red-bg);color:var(--red);">Pendiente</span>`;
     const notePct = (n.clientDiscountPct||0)+(n.extraDiscountPct||0);
@@ -511,6 +575,84 @@ function renderReportesTab(){
   }).join('');
 
   return summary + `<div class="section-title">Todos los productos</div>` + rows;
+}
+
+/* --- Inventario tab --- */
+function renderInventarioTab(){
+  const sorted = catalog.slice().sort((a,b)=>a.name.localeCompare(b.name));
+  const totalUnits = sorted.reduce((sum,p)=>sum+productStock(p),0);
+  const lowCount = sorted.filter(p=>productStock(p)<=productMinStock(p)).length;
+  const summary = `<div class="report-summary">
+    <div class="report-stat"><div class="label">Existencias</div><div class="value mono">${totalUnits}</div></div>
+    <div class="report-stat"><div class="label">Alertas</div><div class="value mono">${lowCount}</div></div>
+  </div>
+  <div class="btnrow" style="margin-bottom:12px;">
+    <button class="btn btn-outline btn-sm" onclick="openModal('catalogManage',{editingId:null})">⚙️ Administrar productos</button>
+  </div>`;
+  if(sorted.length===0) return summary + `<div class="empty"><span class="big">📦</span>Agrega productos al catálogo para administrar inventario.</div>`;
+  return summary + sorted.map(product=>{
+    const status = stockStatus(product);
+    const recent = inventoryMovements.filter(m=>m.productId===product.id).sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||'')).slice(0,3);
+    const recentHTML = recent.length ? recent.map(m=>`<div class="meta">${fmtDate(m.date)} · ${m.quantity>0?'+':''}${m.quantity} · ${esc(m.reason||m.type)}</div>`).join('') : `<div class="meta">Sin movimientos todavía</div>`;
+    return `<div class="card">
+      <div class="row-between">
+        <div>
+          <div class="name">${esc(product.name)}</div>
+          <div class="meta">${esc(product.category||'Sin categoría')} · Venta ${fmt(product.price||0)} · Costo ${fmt(product.cost||0)}</div>
+        </div>
+        <div style="text-align:right;">
+          <div class="mono" style="font-size:20px;font-weight:800;">${productStock(product)}</div>
+          <span class="badge" style="background:${status.bg};color:${status.color};">${status.label}</span>
+        </div>
+      </div>
+      <div class="hint">Stock mínimo: ${productMinStock(product)}</div>
+      <div class="btnrow">
+        <button class="btn btn-gold btn-sm" onclick="openInventoryEntry('${product.id}')">+ Entrada</button>
+        <button class="btn btn-outline btn-sm" onclick="openModal('catalogManage',{editingId:'${product.id}'})">Editar</button>
+      </div>
+      <div class="section-title" style="margin-top:12px;">Últimos movimientos</div>
+      ${recentHTML}
+    </div>`;
+  }).join('');
+}
+function openInventoryEntry(productId){ openModal('inventoryEntry',{productId, quantity:'', reason:'Entrada de mercancía', date:todayISO()}); }
+function modalInventoryEntry(){
+  const p = state.modal.payload;
+  const product = catalog.find(x=>x.id===p.productId);
+  if(!product) return `<div class="empty">Producto no encontrado.</div>`;
+  return `<div class="modal-title"><span>Entrada de inventario</span><button onclick="closeModal()">✕</button></div>
+    <div class="card"><div class="name">${esc(product.name)}</div><div class="meta">Existencia actual: <strong>${productStock(product)}</strong></div></div>
+    <label>Cantidad que entra *</label><input type="number" id="inv-qty" min="1" step="1" value="${esc(p.quantity)}">
+    <label>Fecha</label><input type="date" id="inv-date" value="${p.date}">
+    <label>Motivo / proveedor</label><input type="text" id="inv-reason" value="${esc(p.reason)}" placeholder="Ej. Compra a proveedor">
+    <div class="btnrow"><button class="btn btn-primary btn-block" onclick="submitInventoryEntry()">Guardar entrada</button></div>`;
+}
+function submitInventoryEntry(){
+  const p = state.modal.payload;
+  const product = catalog.find(x=>x.id===p.productId);
+  const quantity = Number(document.getElementById('inv-qty').value);
+  const date = document.getElementById('inv-date').value || todayISO();
+  const reason = document.getElementById('inv-reason').value.trim() || 'Entrada de mercancía';
+  if(!product){ showToast('Producto no encontrado'); return; }
+  if(!quantity || quantity<=0){ showToast('Ingresa una cantidad válida'); return; }
+  product.stock = productStock(product)+quantity;
+  addInventoryMovement(product.id,'entrada',quantity,{date,reason});
+  saveCatalog(); saveInventoryMovements();
+  closeModal(); renderApp(); showToast('Inventario actualizado');
+}
+function fulfillOrder(noteId){
+  const note = notes.find(n=>n.id===noteId);
+  if(!note || note.fulfillmentStatus!=='pedido') return;
+  const shortages = getStockShortages(note.items);
+  if(shortages.length){
+    showToast('Aún falta inventario: '+shortages.map(s=>`${s.product.name} (${s.available}/${s.requested})`).join(', '));
+    return;
+  }
+  applyInventorySale(note.items,note.id,todayISO());
+  note.fulfillmentStatus='entregada';
+  note.inventoryApplied=true;
+  note.fulfilledAt=new Date().toISOString();
+  saveNotes(); closeModal(); renderApp(); showToast('Pedido surtido; ya puede cobrarse');
 }
 
 /* --- Adeudos tab --- */
@@ -624,6 +766,7 @@ function renderModal(){
   if(type==='confirm') html = modalConfirm();
   if(type==='catalogManage') html = modalCatalogManage();
   if(type==='salesStats') html = modalSalesStats();
+  if(type==='inventoryEntry') html = modalInventoryEntry();
   root.innerHTML = `<div class="modal-overlay" onclick="closeModal()"><div class="modal-sheet" onclick="event.stopPropagation()">${html}</div></div>`;
 }
 
@@ -830,17 +973,26 @@ function submitNoteForm(){
   const client = getClient(p.clientId);
   const clientDiscountPct = client ? Number(client.discount)||0 : 0;
   const extraDiscountPct = Math.min(100, Math.max(0, Number(p.extraDiscount)||0));
-  addNote({
+  const shortages = getStockShortages(items);
+  const isOrder = shortages.length>0;
+  const note = addNote({
     clientId: p.clientId,
     date: p.date || todayISO(),
     items,
-    paid: Number(p.paid)||0,
+    paid: isOrder ? 0 : (Number(p.paid)||0),
     notes: (p.notes||'').trim(),
     clientDiscountPct,
     extraDiscountPct,
+    fulfillmentStatus: isOrder ? 'pedido' : 'entregada',
+    inventoryApplied: !isOrder,
   });
+  if(!isOrder) applyInventorySale(items,note.id,note.date);
   closeModal(); renderApp();
-  showToast('Nota de venta guardada');
+  if(isOrder){
+    showToast('Pedido guardado sin cobrar; falta inventario');
+  }else{
+    showToast('Nota de venta guardada');
+  }
 }
 
 /* --- Nota detail modal --- */
@@ -863,8 +1015,9 @@ function modalNoteDetail(){
     <div class="total-strip"><span>Subtotal</span><span class="mono">${fmt(subtotal)}</span></div>
     <div class="total-strip"><span>Descuento (${clientPct>0?`fijo ${clientPct}%`:''}${clientPct>0&&extraPct>0?' + ':''}${extraPct>0?`única vez ${extraPct}%`:''})</span><span class="mono">-${fmt(n.discountAmount||0)}</span></div>
   ` : '';
-  const statusLabel = info.status==='pagada' ? 'Pagada' : info.status==='parcial' ? 'Parcial' : 'Pendiente';
-  const statusColor = info.status==='pagada' ? 'var(--green)' : info.status==='pendiente' ? 'var(--red)' : 'var(--blue)';
+  const isOrder = n.fulfillmentStatus==='pedido';
+  const statusLabel = isOrder ? 'Pedido pendiente de surtir' : (info.status==='pagada' ? 'Pagada' : info.status==='parcial' ? 'Parcial' : 'Pendiente');
+  const statusColor = isOrder ? 'var(--gold-dark)' : (info.status==='pagada' ? 'var(--green)' : info.status==='pendiente' ? 'var(--red)' : 'var(--blue)');
   return `
     <div class="modal-title"><span>Nota de venta</span><button onclick="closeModal()">✕</button></div>
     <div class="meta">${esc(c?c.name:'(cliente eliminado)')} · ${fmtDate(n.date)}</div>
@@ -872,11 +1025,13 @@ function modalNoteDetail(){
     ${discountLine}
     <div class="total-strip"><span>Total</span><span class="mono">${fmt(n.total)}</span></div>
     <div class="total-strip"><span>Pagado en la venta</span><span class="mono">${fmt(n.paid||0)}</span></div>
+    ${isOrder?`<div class="hint" style="background:#F8E8C7;padding:10px;border-radius:8px;margin-top:10px;">Este registro es un pedido. No genera adeudo ni permite cobro hasta que haya inventario y se marque como surtido.</div>`:''}
     ${info.allocated>0.004?`<div class="total-strip"><span>Abonos posteriores aplicados</span><span class="mono">${fmt(info.allocated)}</span></div>`:''}
     <div class="total-strip"><span>Estado</span><span class="mono" style="color:${statusColor};">${statusLabel}</span></div>
     <div class="total-strip"><span>Saldo de esta nota</span><span class="mono ${info.saldo>0.004?'owed':'clear'}">${info.saldo>0.004?fmt(info.saldo):'Cubierto'}</span></div>
     ${n.notes?`<div class="hint" style="margin-top:8px;">${esc(n.notes)}</div>`:''}
     <div class="btnrow">
+      ${isOrder?`<button class="btn btn-gold btn-block" onclick="fulfillOrder('${n.id}')">Surtir pedido</button>`:''}
       <button class="btn btn-danger btn-block" onclick="confirmDeleteNote('${n.id}')">Eliminar nota</button>
     </div>
   `;
@@ -942,63 +1097,57 @@ function modalCatalogManage(){
   const rows = sorted.map(p=>{
     if(payload.editingId===p.id){
       return `<div class="catalog-row" style="display:block;">
-        <label style="margin-top:0;">Nombre</label>
-        <input type="text" id="ce-name-${p.id}" value="${esc(p.name)}">
-        <label>Categoría (opcional)</label>
-        <input type="text" id="ce-category-${p.id}" value="${esc(p.category||'')}" placeholder="Ej. Salsas, Botanas...">
-        <label>Precio</label>
-        <input type="number" id="ce-price-${p.id}" min="0" step="any" value="${p.price}">
-        <div class="btnrow">
-          <button class="btn btn-primary btn-sm" onclick="saveEditProduct('${p.id}')">Guardar</button>
-          <button class="btn btn-outline btn-sm" onclick="cancelEditProduct()">Cancelar</button>
-        </div>
+        <label style="margin-top:0;">Nombre</label><input type="text" id="ce-name-${p.id}" value="${esc(p.name)}">
+        <label>Categoría</label><input type="text" id="ce-category-${p.id}" value="${esc(p.category||'')}">
+        <label>Precio de venta</label><input type="number" id="ce-price-${p.id}" min="0" step="any" value="${Number(p.price)||0}">
+        <label>Costo</label><input type="number" id="ce-cost-${p.id}" min="0" step="any" value="${Number(p.cost)||0}">
+        <label>Existencias</label><input type="number" id="ce-stock-${p.id}" min="0" step="1" value="${productStock(p)}">
+        <label>Stock mínimo</label><input type="number" id="ce-minstock-${p.id}" min="0" step="1" value="${productMinStock(p)}">
+        <div class="btnrow"><button class="btn btn-primary btn-sm" onclick="saveEditProduct('${p.id}')">Guardar</button><button class="btn btn-outline btn-sm" onclick="cancelEditProduct()">Cancelar</button></div>
       </div>`;
     }
-    return `<div class="catalog-row">
-      <div>
-        <div class="cname">${esc(p.name)}</div>
-        <div class="meta">${p.category?`<span class="badge zone">${esc(p.category)}</span> `:''}<span class="mono">${fmt(p.price)}</span></div>
-      </div>
-      <div style="display:flex;gap:6px;">
-        <button class="btn btn-outline btn-sm" onclick="startEditProduct('${p.id}')">Editar</button>
-        <button class="removebtn" style="padding:0 10px;" onclick="deleteProduct('${p.id}'); renderModal();">✕</button>
-      </div>
-    </div>`;
+    const status=stockStatus(p);
+    return `<div class="catalog-row"><div><div class="cname">${esc(p.name)}</div><div class="meta">${p.category?`<span class="badge zone">${esc(p.category)}</span> `:''}<span class="mono">${fmt(p.price)}</span> · Stock ${productStock(p)} <span class="badge" style="background:${status.bg};color:${status.color};">${status.label}</span></div></div><div style="display:flex;gap:6px;"><button class="btn btn-outline btn-sm" onclick="startEditProduct('${p.id}')">Editar</button><button class="removebtn" style="padding:0 10px;" onclick="deleteProduct('${p.id}'); renderModal();">✕</button></div></div>`;
   }).join('');
-  return `
-    <div class="modal-title"><span>Catálogo de productos</span><button onclick="closeModal()">✕</button></div>
-    <label>Nuevo producto</label>
-    <input type="text" id="new-prod-name" placeholder="Nombre del producto" style="margin-bottom:6px;">
-    <div class="catalog-add">
-      <input type="text" id="new-prod-category" placeholder="Categoría (opcional)">
-      <input type="number" id="new-prod-price" placeholder="Precio" min="0" step="any">
-    </div>
-    <button class="btn btn-gold btn-block" onclick="submitNewProduct()">${'+ Agregar al catálogo'}</button>
-    <div class="hint">La categoría te sirve para agrupar productos (ej. "Salsas", "Botanas") y ver cuáles se venden más en la sección de estadísticas.</div>
-    <div class="section-title">Tus productos</div>
-    ${sorted.length===0 ? `<div class="empty" style="padding:20px 8px;">Aún no tienes productos guardados.</div>` : rows}
-  `;
+  return `<div class="modal-title"><span>Catálogo de productos</span><button onclick="closeModal()">✕</button></div>
+    <label>Nuevo producto</label><input type="text" id="new-prod-name" placeholder="Nombre del producto">
+    <label>Categoría</label><input type="text" id="new-prod-category" placeholder="Ej. Salsas">
+    <label>Precio de venta</label><input type="number" id="new-prod-price" min="0" step="any" placeholder="0.00">
+    <label>Costo</label><input type="number" id="new-prod-cost" min="0" step="any" placeholder="0.00">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"><div><label>Existencias</label><input type="number" id="new-prod-stock" min="0" step="1" value="0"></div><div><label>Stock mínimo</label><input type="number" id="new-prod-minstock" min="0" step="1" value="0"></div></div>
+    <button class="btn btn-gold btn-block" style="margin-top:12px;" onclick="submitNewProduct()">+ Agregar al catálogo</button>
+    <div class="section-title">Tus productos</div>${sorted.length===0?`<div class="empty" style="padding:20px 8px;">Aún no tienes productos guardados.</div>`:rows}`;
 }
 function submitNewProduct(){
-  const name = document.getElementById('new-prod-name').value.trim();
-  const category = document.getElementById('new-prod-category').value.trim();
-  const price = Number(document.getElementById('new-prod-price').value);
-  if(!name){ showToast('Escribe el nombre del producto'); return; }
-  if(!price || price<0){ showToast('Ingresa un precio válido'); return; }
-  addProduct({ name, category, price });
+  const name=document.getElementById('new-prod-name').value.trim();
+  const category=document.getElementById('new-prod-category').value.trim();
+  const price=Number(document.getElementById('new-prod-price').value);
+  const cost=Number(document.getElementById('new-prod-cost').value)||0;
+  const stock=Math.max(0,Number(document.getElementById('new-prod-stock').value)||0);
+  const minStock=Math.max(0,Number(document.getElementById('new-prod-minstock').value)||0);
+  if(!name){showToast('Escribe el nombre del producto');return;}
+  if(price<0 || !Number.isFinite(price)){showToast('Ingresa un precio válido');return;}
+  const product={name,category,price,cost,stock,minStock}; addProduct(product);
+  if(stock>0){ const created=catalog[catalog.length-1]; addInventoryMovement(created.id,'entrada',stock,{reason:'Existencia inicial'}); saveInventoryMovements(); }
   renderModal();
 }
-function startEditProduct(id){ state.modal.payload.editingId = id; renderModal(); }
-function cancelEditProduct(){ state.modal.payload.editingId = null; renderModal(); }
+function startEditProduct(id){state.modal.payload.editingId=id;renderModal();}
+function cancelEditProduct(){state.modal.payload.editingId=null;renderModal();}
 function saveEditProduct(id){
-  const name = document.getElementById('ce-name-'+id).value.trim();
-  const category = document.getElementById('ce-category-'+id).value.trim();
-  const price = Number(document.getElementById('ce-price-'+id).value);
-  if(!name){ showToast('Escribe el nombre del producto'); return; }
-  if(!price || price<0){ showToast('Ingresa un precio válido'); return; }
-  updateProduct(id, { name, category, price });
-  state.modal.payload.editingId = null;
-  renderModal();
+  const product=catalog.find(p=>p.id===id); if(!product)return;
+  const oldStock=productStock(product);
+  const name=document.getElementById('ce-name-'+id).value.trim();
+  const category=document.getElementById('ce-category-'+id).value.trim();
+  const price=Number(document.getElementById('ce-price-'+id).value);
+  const cost=Math.max(0,Number(document.getElementById('ce-cost-'+id).value)||0);
+  const stock=Math.max(0,Number(document.getElementById('ce-stock-'+id).value)||0);
+  const minStock=Math.max(0,Number(document.getElementById('ce-minstock-'+id).value)||0);
+  if(!name){showToast('Escribe el nombre del producto');return;}
+  if(price<0 || !Number.isFinite(price)){showToast('Ingresa un precio válido');return;}
+  updateProduct(id,{name,category,price,cost,stock,minStock});
+  const difference=stock-oldStock;
+  if(difference!==0){addInventoryMovement(id,'ajuste',difference,{reason:'Ajuste manual de existencias'});saveInventoryMovements();}
+  state.modal.payload.editingId=null;renderModal();
 }
 
 /* --- Estadísticas de ventas (más vendidos) --- */
