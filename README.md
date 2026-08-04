@@ -52,3 +52,15 @@ El paquete incluye el logotipo oficial procesado desde el PDF suministrado:
 - `assets/img/logo.png`: copia compatible de la versión compacta.
 
 Los archivos tienen fondo transparente y están recortados para evitar que el logotipo se vea pequeño.
+
+
+## Navegación compacta
+La barra inferior muestra Clientes, Ventas, Adeudos e Inventario para administradores. Rutas, Productos/Reportes y Vendedores están en el menú superior. Los vendedores no ven Inventario ni Vendedores.
+
+
+## Corrección de navegación
+Se restauró la función de renderizado de la pestaña Ventas para evitar que quedara visible la pantalla anterior al cambiar de menú.
+
+
+## Mapa de clientes
+Sección exclusiva de administrador con pines para todos los clientes que tienen ubicación GPS guardada.

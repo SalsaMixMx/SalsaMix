@@ -17,8 +17,10 @@ const state = {
   clientDetailId: null,
   routeDay: 'todos',
   search: '',
+  topMenuOpen: false,
   selectedSellerId: null,
   smartRoute: null, // {day, ids, chunks, currentChunk}
+  clientMap: null,
   modal: null, // {type, payload}
 };
 
@@ -766,10 +768,25 @@ const ICONS = {
   clientes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="3.4"/><path d="M4.5 20c1-4 4-6 7.5-6s6.5 2 7.5 6"/></svg>',
   rutas: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20c3-6 5-2 7-8s3-2 5-8"/><circle cx="4" cy="20" r="1.4"/><circle cx="18" cy="4" r="1.4"/></svg>',
   ventas: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/></svg>',
-  adeudos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5c0-1.4 1.2-2 2.5-2s2.5.7 2.5 2c0 3-5 1.7-5 4.7 0 1.3 1.2 2.3 2.5 2.3s2.5-.7 2.5-2"/></svg>',
+  adeudos: `
+<svg viewBox="0 0 24 24"
+     fill="none"
+     stroke="currentColor"
+     stroke-width="1.8"
+     stroke-linecap="round"
+     stroke-linejoin="round">
+    <circle cx="12" cy="12" r="9"/>
+    <path d="M12 6.5v11"/>
+    <path d="M14.5 8.5c0-1.2-1.1-2-2.5-2s-2.5.8-2.5 2
+             c0 3 5 1.8 5 4.8
+             c0 1.3-1.1 2.2-2.5 2.2
+             s-2.5-.8-2.5-2"/>
+</svg>
+`,
   reportes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
   inventario: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7l8-4 8 4-8 4-8-4z"/><path d="M4 7v10l8 4 8-4V7"/><path d="M12 11v10"/></svg>',
   vendedores: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.4"/><path d="M3 20c.8-4 3.2-6 6-6s5.2 2 6 6"/><path d="M15 15c2.5.2 4.3 1.8 5 5"/></svg>',
+  mapa: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15M15 6v15"/><circle cx="15" cy="10" r="2"/><path d="M15 12c-1.6 2-2.4 3.2-2.4 4.1A2.4 2.4 0 0015 18.5a2.4 2.4 0 002.4-2.4C17.4 15.2 16.6 14 15 12z"/></svg>',
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
   phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 4h3l1.5 4-2 1.5a12 12 0 0 0 5.5 5.5l1.5-2 4 1.5v3c0 1-1 2-2 2-8 0-14-6-14-14 0-1 1-2 2-2z"/></svg>',
@@ -782,7 +799,11 @@ function renderHeader(){
   if(state.clientDetailId){
     const c = getClient(state.clientDetailId);
     el.innerHTML = `
-      ${brandBar}
+      <div class="header-topline">
+        ${brandBar}
+        <button class="top-menu-btn" onclick="toggleTopMenu(event)" aria-label="Abrir menú" aria-expanded="${state.topMenuOpen?'true':'false'}">☰</button>
+        ${renderTopMenu()}
+      </div>
       <div class="subrow">
         <button class="backbtn" onclick="goBack()">${ICONS.back}<span>Clientes</span></button>
       </div>
@@ -791,22 +812,50 @@ function renderHeader(){
       </div>`;
     return;
   }
-  const titles = { clientes:'Mi Ruta', rutas:'Rutas de la semana', ventas:'Notas de venta', adeudos:'Adeudos', reportes:'Ventas por producto', inventario:'Inventario', vendedores:'Vendedores' };
+  const titles = { clientes:'Mi Ruta', rutas:'Rutas de la semana', ventas:'Notas de venta', adeudos:'Adeudos', reportes:'Ventas por producto', inventario:'Inventario', vendedores:'Vendedores', mapa:'Mapa de clientes' };
   const userName = currentProfile ? (currentProfile.name || currentProfile.email || 'Usuario') : 'Usuario';
   const userRole = currentProfile ? (currentProfile.role || 'vendedor') : 'vendedor';
   el.innerHTML = `
-    ${brandBar}
+    <div class="header-topline">
+      ${brandBar}
+      <button class="top-menu-btn" onclick="toggleTopMenu(event)" aria-label="Abrir menú" aria-expanded="${state.topMenuOpen?'true':'false'}">☰</button>
+      ${renderTopMenu()}
+    </div>
     <div class="brand stamp">${titles[state.tab]}<small>Libreta digital de ventas</small><div class="sync-status">☁ Sincronización Firebase</div></div>
     <div class="userbar"><div class="userbar-info"><div class="userbar-name">${esc(userName)}</div><div class="userbar-role">${esc(userRole)}</div></div><button class="logout-btn" onclick="logoutUser()">Salir</button></div>
     ${state.tab==='clientes' ? `<div class="search-wrap"><input type="text" placeholder="Buscar cliente..." value="${esc(state.search)}" oninput="onSearchInput(this.value)"></div>` : ''}
   `;
 }
 
+function renderTopMenu(){
+  if(!state.topMenuOpen) return '';
+  const items = isAdmin()
+    ? [['rutas','Rutas'],['mapa','Mapa de clientes'],['reportes','Productos y reportes'],['vendedores','Vendedores']]
+    : [['rutas','Rutas']];
+  return `<div class="top-menu-dropdown" onclick="event.stopPropagation()">
+    ${items.map(([key,label])=>`<button class="${state.tab===key?'active':''}" onclick="selectTopMenuTab('${key}')">${ICONS[key]}<span>${label}</span></button>`).join('')}
+  </div>`;
+}
+function toggleTopMenu(event){
+  if(event) event.stopPropagation();
+  state.topMenuOpen=!state.topMenuOpen;
+  renderHeader();
+}
+function selectTopMenuTab(tab){
+  state.topMenuOpen=false;
+  setTab(tab);
+}
+function closeTopMenu(){
+  if(!state.topMenuOpen) return;
+  state.topMenuOpen=false;
+  renderHeader();
+}
+
 /* ---------------- RENDER: BOTTOM NAV ---------------- */
 function renderBottomNav(){
   const el = document.getElementById('bottomnav');
   const tabs = isAdmin()
-    ? [['clientes','Clientes'],['vendedores','Vendedores'],['rutas','Rutas'],['ventas','Ventas'],['adeudos','Adeudos'],['reportes','Productos'],['inventario','Inventario']]
+    ? [['clientes','Clientes'],['ventas','Ventas'],['adeudos','Adeudos'],['inventario','Inventario']]
     : [['clientes','Clientes'],['rutas','Rutas'],['ventas','Ventas'],['adeudos','Adeudos']];
   el.innerHTML = tabs.map(([key,label])=>`
     <button class="${state.tab===key?'active':''}" onclick="setTab('${key}')">
@@ -841,13 +890,19 @@ function renderApp(){
   else if(state.tab==='reportes') el.innerHTML = renderReportesTab();
   else if(state.tab==='inventario') el.innerHTML = renderInventarioTab();
   else if(state.tab==='vendedores') el.innerHTML = renderVendedoresTab();
+  else if(state.tab==='mapa'){
+    el.innerHTML = renderMapaClientesTab();
+    window.setTimeout(initMapaClientes, 0);
+  }
 }
 
 function setTab(tab){
-  if(!isAdmin() && ['reportes','inventario','vendedores'].includes(tab)){ showToast('Solo el administrador puede entrar'); return; }
+  state.topMenuOpen=false;
+  if(!isAdmin() && ['reportes','inventario','vendedores','mapa'].includes(tab)){ showToast('Solo el administrador puede entrar'); return; }
   state.tab = tab; state.clientDetailId = null; renderApp();
 }
 function goBack(){
+  state.topMenuOpen=false;
   const clientId=state.clientDetailId;
   if(clientId && state.tab==='rutas' && clientVisitStatus(clientId).key==='pendiente'){
     openModal('visitPrompt',{clientId});
@@ -856,6 +911,121 @@ function goBack(){
   state.clientDetailId = null; renderApp();
 }
 function onSearchInput(v){ state.search = v; document.getElementById('app').innerHTML = renderClientesTab(); }
+
+/* --- Mapa de clientes (solo administrador) --- */
+function clientsWithLocation(){
+  return clients.filter(hasClientLocation);
+}
+function renderMapaClientesTab(){
+  if(!isAdmin()) return `<div class="empty">Solo el administrador puede consultar el mapa.</div>`;
+  const located=clientsWithLocation();
+  const missing=clients.length-located.length;
+  return `<div class="map-admin-summary">
+      <div><strong>${located.length}</strong><span>Con ubicación</span></div>
+      <div><strong>${missing}</strong><span>Sin ubicación</span></div>
+    </div>
+    ${located.length===0
+      ? `<div class="empty"><span class="big">🗺️</span>No hay clientes con ubicación guardada.</div>`
+      : `<div class="map-toolbar">
+          <button class="btn btn-outline btn-sm" onclick="centerAdminMapOnMe()">📍 Mi ubicación</button>
+          <button class="btn btn-outline btn-sm" onclick="fitAllClientPins()">◉ Ver todos</button>
+        </div>
+        <div id="admin-client-map" class="admin-client-map" aria-label="Mapa con ubicaciones de clientes"></div>
+        <div class="map-legend"><span>📍 Cada pin representa un cliente con GPS guardado.</span></div>`}`;
+}
+function initMapaClientes(){
+  if(state.tab!=='mapa' || !isAdmin()) return;
+  const container=document.getElementById('admin-client-map');
+  if(!container) return;
+  if(typeof L==='undefined'){
+    container.innerHTML='<div class="empty" style="padding:30px 10px;">No se pudo cargar el mapa. Revisa tu conexión a internet.</div>';
+    return;
+  }
+  if(state.clientMapResizeObserver){
+    try{ state.clientMapResizeObserver.disconnect(); }catch(error){}
+    state.clientMapResizeObserver=null;
+  }
+  if(state.clientMap){
+    try{ state.clientMap.remove(); }catch(error){}
+    state.clientMap=null;
+  }
+  const located=clientsWithLocation();
+  const map=L.map(container,{zoomControl:true});
+  state.clientMap=map;
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    maxZoom:19,
+    attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
+  }).addTo(map);
+  const bounds=[];
+  located.forEach(client=>{
+    const lat=Number(client.locationLat), lng=Number(client.locationLng);
+    bounds.push([lat,lng]);
+    const seller=isAdmin()?sellerName(client.assignedTo):'';
+    const bal=balanceFor(client.id);
+    const popup=`<div class="client-map-popup">
+      <strong>${esc(client.name)}</strong>
+      ${client.zone?`<div>${esc(client.zone)}</div>`:''}
+      ${seller?`<div>Vendedor: ${esc(seller)}</div>`:''}
+      <div class="${bal>0.004?'map-debt':'map-clear'}">${bal>0.004?`Adeudo: ${fmt(bal)}`:'Al día'}</div>
+      <div class="client-map-popup-actions">
+        <button onclick="openClientFromMap('${client.id}')">Ver cliente</button>
+        <button onclick="openClientMap('${client.id}')">Cómo llegar</button>
+      </div>
+    </div>`;
+    L.marker([lat,lng],{title:client.name}).addTo(map).bindPopup(popup);
+  });
+  window.__adminClientMapBounds=bounds;
+
+  const refreshMapSize = ()=>{
+    if(!state.clientMap || state.clientMap!==map) return;
+    map.invalidateSize({pan:false,animate:false});
+    if(bounds.length===1) map.setView(bounds[0],16,{animate:false});
+    else map.fitBounds(bounds,{padding:[28,28],maxZoom:16,animate:false});
+  };
+
+  // La sección se crea dinámicamente. Esperamos a que Leaflet CSS y el
+  // contenedor tengan dimensiones reales antes de recalcular los mosaicos.
+  const refreshWhenReady = (attempt=0)=>{
+    if(!state.clientMap || state.clientMap!==map) return;
+    const rect=container.getBoundingClientRect();
+    const leafletReady=getComputedStyle(container).position==='relative';
+    if(rect.width<100 || rect.height<100 || !leafletReady){
+      if(attempt<20) window.setTimeout(()=>refreshWhenReady(attempt+1),100);
+      return;
+    }
+    refreshMapSize();
+    window.setTimeout(refreshMapSize,180);
+    window.setTimeout(refreshMapSize,600);
+  };
+  requestAnimationFrame(()=>requestAnimationFrame(()=>refreshWhenReady()));
+
+  if(typeof ResizeObserver!=='undefined'){
+    if(state.clientMapResizeObserver) state.clientMapResizeObserver.disconnect();
+    state.clientMapResizeObserver=new ResizeObserver(()=>refreshMapSize());
+    state.clientMapResizeObserver.observe(container);
+  }
+}
+function fitAllClientPins(){
+  const map=state.clientMap, bounds=window.__adminClientMapBounds||[];
+  if(!map || !bounds.length) return;
+  if(bounds.length===1) map.setView(bounds[0],16);
+  else map.fitBounds(bounds,{padding:[28,28],maxZoom:16});
+}
+async function centerAdminMapOnMe(){
+  if(!state.clientMap) return;
+  try{
+    const position=await getCurrentLocationForRoute();
+    state.clientMap.setView([position.lat,position.lng],15);
+    L.circleMarker([position.lat,position.lng],{radius:8,color:'#2563eb',fillColor:'#60a5fa',fillOpacity:.9}).addTo(state.clientMap).bindPopup('Tu ubicación actual').openPopup();
+  }catch(error){
+    showToast(error.message||'No se pudo obtener tu ubicación');
+  }
+}
+function openClientFromMap(clientId){
+  state.tab='clientes';
+  state.clientDetailId=clientId;
+  renderApp();
+}
 
 /* --- Clientes tab --- */
 function renderClientesTab(){
@@ -1046,6 +1216,38 @@ function setRouteDay(day){
   state.routeDay=day;
   state.smartRoute=null;
   document.getElementById('app').innerHTML=renderRutasTab();
+}
+
+/* --- Ventas tab --- */
+function renderVentasTab(){
+  const catalogBtn = `<div class="btnrow" style="margin-bottom:10px;">
+    <button class="btn btn-outline btn-sm" onclick="openModal('catalogManage',{editingId:null})">📦 Catálogo (${catalog.length})</button>
+    <button class="btn btn-outline btn-sm" onclick="setTab('reportes')">📊 Ventas por producto</button>
+  </div>`;
+  if(visibleNotes().length===0){
+    return catalogBtn + `<div class="empty"><span class="big">🧾</span>No has registrado notas de venta.<br>Toca + para crear la primera.</div>`;
+  }
+  const statusMap = computeEffectiveNoteStatuses();
+  const list = visibleNotes().slice().sort((a,b)=> b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
+  return catalogBtn + list.map(n=>{
+    const c = getClient(n.clientId);
+    const info = statusMap.get(n.id) || { saldo: Math.max(0, Math.round((n.total-(n.paid||0))*100)/100), status:'pendiente' };
+    let statusBadge;
+    if(n.fulfillmentStatus==='pedido') statusBadge = `<span class="badge" style="background:#F8E8C7;color:var(--gold-dark);">Pedido pendiente</span>`;
+    else if(info.status==='pagada') statusBadge = `<span class="badge" style="background:var(--green-bg);color:var(--green);">Pagada</span>`;
+    else if(info.status==='parcial') statusBadge = `<span class="badge" style="background:var(--blue-bg);color:var(--blue);">Parcial</span>`;
+    else statusBadge = `<span class="badge" style="background:var(--red-bg);color:var(--red);">Pendiente</span>`;
+    const notePct = (n.clientDiscountPct||0)+(n.extraDiscountPct||0);
+    return `<div class="card tap" onclick="openNoteDetail('${n.id}')">
+      <div class="row-between">
+        <div>
+          <div class="name">${esc(c ? c.name : '(cliente eliminado)')}</div>
+          <div class="meta">${fmtDate(n.date)} · ${(n.items||[]).length} producto(s) ${statusBadge}${notePct>0?` <span class="badge discount">-${notePct}%</span>`:''}</div>
+        </div>
+        <div class="balance mono">${fmt(n.total)}</div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 /* --- Reportes: ventas por producto --- */
@@ -1770,6 +1972,10 @@ function modalConfirm(){
   `;
 }
 function runConfirmAction(){ if(window.__confirmAction) window.__confirmAction(); }
+
+document.addEventListener('click', (event)=>{
+  if(state.topMenuOpen && !event.target.closest('.header-topline')) closeTopMenu();
+});
 
 /* ---------------- INIT ---------------- */
 window.addEventListener('salsamix-auth-change', async event=>{

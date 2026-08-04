@@ -306,3 +306,76 @@ select#f-assigned-to{margin-bottom:2px;}
   .auth-brand{min-height:125px;}
   .auth-logo{width:min(300px,86vw);max-height:185px;}
 }
+
+
+/* Menú principal compacto */
+.header-topline{position:relative;display:flex;align-items:center;justify-content:center;min-height:72px;}
+.header-topline .brandbar{margin:0;}
+.top-menu-btn{
+  position:absolute;right:0;top:50%;transform:translateY(-50%);
+  width:42px;height:42px;border-radius:11px;border:1px solid rgba(255,255,255,.34);
+  background:rgba(78,19,16,.35);color:var(--paper);font-size:23px;line-height:1;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:3;
+}
+.top-menu-btn:active{transform:translateY(-50%) scale(.96);}
+.top-menu-dropdown{
+  position:absolute;right:0;top:calc(100% + 6px);z-index:50;width:min(270px,82vw);
+  background:var(--white);border:1px solid var(--paper-line);border-radius:12px;
+  padding:7px;box-shadow:0 12px 30px rgba(43,27,18,.28);color:var(--ink);
+}
+.top-menu-dropdown button{
+  width:100%;border:0;background:transparent;color:var(--ink);padding:11px 12px;
+  border-radius:9px;display:flex;align-items:center;gap:10px;text-align:left;
+  font-size:14px;font-weight:750;cursor:pointer;
+}
+.top-menu-dropdown button:hover,.top-menu-dropdown button.active{background:var(--blue-bg);color:var(--cover);}
+.top-menu-dropdown svg{width:22px;height:22px;flex:0 0 auto;}
+nav.bottomnav button{font-size:11px;padding:7px 4px;}
+nav.bottomnav svg{width:23px;height:23px;}
+@media(max-width:380px){
+  .top-menu-btn{width:38px;height:38px;font-size:21px;}
+  .top-menu-dropdown{width:min(250px,88vw);}
+  nav.bottomnav button{font-size:10px;}
+}
+
+
+/* Mapa de clientes — administrador */
+.map-admin-summary{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;}
+.map-admin-summary>div{background:var(--white);border:1px solid var(--paper-line);border-radius:12px;padding:12px;text-align:center;}
+.map-admin-summary strong{display:block;font-size:24px;color:var(--cover);}
+.map-admin-summary span{display:block;font-size:11px;color:var(--ink-light);text-transform:uppercase;font-weight:700;letter-spacing:.05em;}
+.map-toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;}
+.admin-client-map{width:100%;height:58vh;min-height:390px;border:1px solid var(--paper-line);border-radius:14px;overflow:hidden;background:#e9e3d8;box-shadow:0 2px 8px rgba(0,0,0,.08);}
+.map-legend{font-size:11px;color:var(--ink-light);padding:8px 2px 0;}
+.client-map-popup{min-width:190px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#2B1B12;line-height:1.35;}
+.client-map-popup strong{font-size:14px;display:block;margin-bottom:3px;}
+.client-map-popup>div{font-size:12px;margin-top:2px;}
+.client-map-popup .map-debt{color:#C0392B;font-weight:700;}
+.client-map-popup .map-clear{color:#3F7D58;font-weight:700;}
+.client-map-popup-actions{display:flex;gap:6px;margin-top:8px!important;}
+.client-map-popup-actions button{border:0;border-radius:6px;padding:6px 8px;font-size:11px;font-weight:700;cursor:pointer;background:#7A1F1B;color:#FFFDF8;}
+.client-map-popup-actions button+button{background:#E0972E;color:#2B1B12;}
+.leaflet-control-attribution{font-size:9px;}
+@media(max-width:380px){.admin-client-map{height:54vh;min-height:340px;}}
+
+
+/* Corrección definitiva de Leaflet en vistas dinámicas */
+.admin-client-map.leaflet-container{
+  position:relative!important;
+  display:block!important;
+  width:100%!important;
+  box-sizing:border-box;
+  touch-action:pan-x pan-y;
+}
+.admin-client-map .leaflet-map-pane,
+.admin-client-map .leaflet-tile-pane,
+.admin-client-map .leaflet-overlay-pane,
+.admin-client-map .leaflet-marker-pane,
+.admin-client-map .leaflet-shadow-pane,
+.admin-client-map .leaflet-tooltip-pane,
+.admin-client-map .leaflet-popup-pane{
+  position:absolute;
+  left:0;
+  top:0;
+}
+.admin-client-map .leaflet-tile{position:absolute;left:0;top:0;}
