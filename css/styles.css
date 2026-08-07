@@ -426,3 +426,39 @@ nav.bottomnav svg{width:23px;height:23px;}
 .badge.client-type.regular{background:#E8EEF7;color:#355A86;}
 .badge.client-type.pos{background:#F8E8C7;color:var(--gold-dark);}
 .badge.consignment{background:#F8E8C7;color:var(--gold-dark);}
+
+
+/* Planeación de surtido y administración */
+.table-scroll{overflow:auto;margin:12px 0}.admin-table{width:100%;border-collapse:collapse;font-size:12px}.admin-table th,.admin-table td{padding:9px 7px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}.admin-table th:first-child,.admin-table td:first-child{text-align:left}.shortage-total{font-size:24px;font-weight:900}.text-danger{color:var(--red)!important}.text-ok{color:var(--green)!important}.empty.compact{padding:16px}.finance-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:12px}.finance-grid .report-stat{margin:0}.admin-filter{margin-bottom:12px}.financial-line{display:flex;justify-content:space-between;gap:14px;padding:9px 0;border-bottom:1px solid var(--line)}.financial-line:last-of-type{border-bottom:0}.clickable{cursor:pointer}.shortage-card{border-left:4px solid var(--gold)}textarea{min-height:90px;resize:vertical}@media(min-width:700px){.finance-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+
+/* Corrección visual del módulo de Administración */
+.top-menu-dropdown button > span:last-child{
+  min-width:0;
+  line-height:1.2;
+  overflow-wrap:anywhere;
+}
+.finance-grid{
+  grid-template-columns:repeat(2,minmax(0,1fr));
+}
+.finance-grid .report-stat{
+  min-width:0;
+  overflow:hidden;
+}
+.finance-grid .report-stat .label{
+  line-height:1.15;
+  min-height:23px;
+}
+.finance-grid .report-stat .value{
+  font-size:clamp(16px,4.7vw,20px);
+  line-height:1.1;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+@media(min-width:700px){
+  .finance-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
+}
+@media(max-width:370px){
+  .finance-grid .report-stat{padding:10px 9px;}
+  .finance-grid .report-stat .value{font-size:15px;}
+}

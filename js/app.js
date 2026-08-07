@@ -5,6 +5,7 @@ let payments = [];
 let catalog = [];
 let inventoryMovements = [];
 let visits = [];
+let purchases = [];
 let sellers = [];
 let loaded = false;
 let currentUser = null;
@@ -187,6 +188,7 @@ const STORAGE_KEYS = {
   catalog: 'catalog-data',
   inventoryMovements: 'inventory-movements-data',
   visits: 'visits-data',
+  purchases: 'purchases-data',
 };
 
 function scopedStorageKey(key){
@@ -225,8 +227,9 @@ async function loadLocalSnapshot(){
     readLegacyValue(STORAGE_KEYS.catalog),
     readLegacyValue(STORAGE_KEYS.inventoryMovements),
     readLegacyValue(STORAGE_KEYS.visits),
+    readLegacyValue(STORAGE_KEYS.purchases),
   ]);
-  [clients, notes, payments, catalog, inventoryMovements, visits] = values;
+  [clients, notes, payments, catalog, inventoryMovements, visits, purchases] = values;
   loaded = true;
   syncState = 'cached';
 }
@@ -238,6 +241,7 @@ function persistCurrentSnapshot(){
   saveLocalBackup(STORAGE_KEYS.catalog, catalog);
   saveLocalBackup(STORAGE_KEYS.inventoryMovements, inventoryMovements);
   saveLocalBackup(STORAGE_KEYS.visits, visits);
+  saveLocalBackup(STORAGE_KEYS.purchases, purchases);
 }
 
 function applyCloudUpdate(data){
@@ -247,6 +251,7 @@ function applyCloudUpdate(data){
   if(data.catalog) catalog = data.catalog;
   if(data.inventoryMovements) inventoryMovements = data.inventoryMovements;
   if(data.visits) visits = data.visits;
+  if(data.purchases) purchases = data.purchases;
   persistCurrentSnapshot();
   syncState = 'online';
   if(loaded) renderApp();
@@ -321,6 +326,7 @@ async function savePayments(){ return saveCollection('payments', payments, STORA
 async function saveCatalog(){ return saveCollection('catalog', catalog, STORAGE_KEYS.catalog); }
 async function saveInventoryMovements(){ return saveCollection('inventoryMovements', inventoryMovements, STORAGE_KEYS.inventoryMovements); }
 async function saveVisits(){ return saveCollection('visits', visits, STORAGE_KEYS.visits); }
+async function savePurchases(){ return saveCollection('purchases', purchases, STORAGE_KEYS.purchases); }
 
 function showToast(msg){
   const root = document.getElementById('toast-root');
@@ -862,6 +868,7 @@ const ICONS = {
   inventario: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7l8-4 8 4-8 4-8-4z"/><path d="M4 7v10l8 4 8-4V7"/><path d="M12 11v10"/></svg>',
   vendedores: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.4"/><path d="M3 20c.8-4 3.2-6 6-6s5.2 2 6 6"/><path d="M15 15c2.5.2 4.3 1.8 5 5"/></svg>',
   mapa: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15M15 6v15"/><circle cx="15" cy="10" r="2"/><path d="M15 12c-1.6 2-2.4 3.2-2.4 4.1A2.4 2.4 0 0015 18.5a2.4 2.4 0 002.4-2.4C17.4 15.2 16.6 14 15 12z"/></svg>',
+  administracion: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21h16"/><path d="M6 21V8l6-4 6 4v13"/><path d="M9 12h6M9 16h6"/></svg>',
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
   phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 4h3l1.5 4-2 1.5a12 12 0 0 0 5.5 5.5l1.5-2 4 1.5v3c0 1-1 2-2 2-8 0-14-6-14-14 0-1 1-2 2-2z"/></svg>',
@@ -887,7 +894,7 @@ function renderHeader(){
       </div>`;
     return;
   }
-  const titles = { clientes:'Clientes', rutas:'Rutas de la semana', ventas:'Notas de venta', adeudos:'Adeudos', reportes:'Ventas por producto', inventario:'Inventario', vendedores:'Vendedores', mapa:'Mapa de clientes' };
+  const titles = { clientes:'Clientes', rutas:'Rutas de la semana', ventas:'Notas de venta', adeudos:'Adeudos', reportes:'Ventas por producto', inventario:'Inventario', vendedores:'Vendedores', mapa:'Mapa de clientes', administracion:'Administración' };
   const userName = currentProfile ? (currentProfile.name || currentProfile.email || 'Usuario') : 'Usuario';
   const userRole = currentProfile ? (currentProfile.role || 'vendedor') : 'vendedor';
   el.innerHTML = `
@@ -905,7 +912,7 @@ function renderHeader(){
 function renderTopMenu(){
   if(!state.topMenuOpen) return '';
   const items = isAdmin()
-    ? [['rutas','Rutas'],['mapa','Mapa de clientes'],['reportes','Productos y reportes'],['vendedores','Vendedores']]
+    ? [['rutas','Rutas'],['mapa','Mapa de clientes'],['reportes','Productos y reportes'],['vendedores','Vendedores'],['administracion','Administración']]
     : [['rutas','Rutas']];
   return `<div class="top-menu-dropdown" onclick="event.stopPropagation()">
     ${items.map(([key,label])=>`<button class="${state.tab===key?'active':''}" onclick="selectTopMenuTab('${key}')">${ICONS[key]}<span>${label}</span></button>`).join('')}
@@ -966,6 +973,7 @@ function renderApp(){
   else if(state.tab==='reportes') el.innerHTML = renderReportesTab();
   else if(state.tab==='inventario') el.innerHTML = renderInventarioTab();
   else if(state.tab==='vendedores') el.innerHTML = renderVendedoresTab();
+  else if(state.tab==='administracion') el.innerHTML = renderAdministracionTab();
   else if(state.tab==='mapa'){
     el.innerHTML = renderMapaClientesTab();
     window.setTimeout(initMapaClientes, 0);
@@ -974,7 +982,7 @@ function renderApp(){
 
 function setTab(tab){
   state.topMenuOpen=false;
-  if(!isAdmin() && ['reportes','inventario','vendedores','mapa'].includes(tab)){ showToast('Solo el administrador puede entrar'); return; }
+  if(!isAdmin() && ['reportes','inventario','vendedores','mapa','administracion'].includes(tab)){ showToast('Solo el administrador puede entrar'); return; }
   state.tab = tab; state.clientDetailId = null; renderApp();
 }
 function goBack(){
@@ -1385,7 +1393,8 @@ function renderInventarioTab(){
   </div>
   <div class="btnrow" style="margin-bottom:12px;">
     <button class="btn btn-outline btn-sm" onclick="openModal('catalogManage',{editingId:null})">⚙️ Administrar productos</button>
-  </div>`;
+  </div>
+  ${renderGlobalShortages()}`;
   if(sorted.length===0) return summary + `<div class="empty"><span class="big">📦</span>Agrega productos al catálogo para administrar inventario.</div>`;
   return summary + sorted.map(product=>{
     const status = stockStatus(product);
@@ -1451,6 +1460,74 @@ function fulfillOrder(noteId){
   note.fulfilledAt=new Date().toISOString();
   saveNotes(); closeModal(); renderApp(); showToast('Pedido surtido; ya puede cobrarse');
 }
+
+
+/* --- Planeación de surtido y administración financiera --- */
+function pendingOrderDemand(){
+  const demand=new Map();
+  notes.filter(n=>n.fulfillmentStatus==='pedido').forEach(note=>{
+    (note.items||[]).forEach(item=>{
+      const key=item.catalogId || `name:${String(item.name||'').trim().toLowerCase()}`;
+      if(!key) return;
+      const row=demand.get(key)||{catalogId:item.catalogId||null,name:item.name||'Producto',qty:0,notes:0};
+      row.qty += Number(item.qty)||0; row.notes += 1; demand.set(key,row);
+    });
+  });
+  return [...demand.values()].map(row=>{
+    const product=row.catalogId?catalog.find(p=>p.id===row.catalogId):catalog.find(p=>p.name.trim().toLowerCase()===row.name.trim().toLowerCase());
+    const stock=productStock(product); const missing=Math.max(0,row.qty-stock);
+    return {...row,product,stock,missing};
+  }).sort((a,b)=>b.missing-a.missing || a.name.localeCompare(b.name));
+}
+function renderGlobalShortages(){
+  const rows=pendingOrderDemand();
+  const missing=rows.filter(r=>r.missing>0);
+  const totalMissing=missing.reduce((s,r)=>s+r.missing,0);
+  return `<div class="card shortage-card"><div class="row-between"><div><div class="name">Piezas necesarias para surtir notas abiertas</div><div class="meta">Compara pedidos pendientes contra existencia actual.</div></div><div class="mono shortage-total">${totalMissing}</div></div>
+  ${rows.length?`<div class="table-scroll"><table class="admin-table"><thead><tr><th>Producto</th><th>Existencia</th><th>Comprometido</th><th>Faltan</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.product?.name||r.name)}</td><td>${r.stock}</td><td>${r.qty}</td><td><strong class="${r.missing?'text-danger':'text-ok'}">${r.missing}</strong></td></tr>`).join('')}</tbody></table></div>`:`<div class="empty compact">No hay pedidos abiertos pendientes de surtir.</div>`}
+  <div class="btnrow"><button class="btn btn-outline btn-sm" onclick="exportShortagesCSV()">Exportar CSV</button><button class="btn btn-outline btn-sm" onclick="window.print()">Imprimir</button></div></div>`;
+}
+function exportShortagesCSV(){
+  const rows=pendingOrderDemand();
+  const csv=['Producto,Existencia,Comprometido,Faltan',...rows.map(r=>[r.product?.name||r.name,r.stock,r.qty,r.missing].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(','))].join('\n');
+  downloadTextFile(`faltantes-${todayISO()}.csv`,csv,'text/csv;charset=utf-8');
+}
+function downloadTextFile(name,text,type){ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob(['\ufeff'+text],{type})); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
+function monthKey(date){ return String(date||'').slice(0,7); }
+function financialMetrics(month=''){
+  const saleNotes=notes.filter(n=>isCollectableNote(n) && (!month||monthKey(n.date)===month));
+  const sales=saleNotes.reduce((sum,n)=>sum+(Number(n.total)||0),0);
+  const invested=purchases.filter(p=>!month||monthKey(p.date)===month).reduce((sum,p)=>sum+(Number(p.total)||0),0);
+  const profit=sales-invested;
+  return {sales,invested,profit,margin:sales?profit/sales*100:0,countSales:saleNotes.length,countPurchases:purchases.filter(p=>!month||monthKey(p.date)===month).length};
+}
+function renderAdministracionTab(){
+  if(!isAdmin()) return `<div class="empty">Solo el administrador puede consultar este apartado.</div>`;
+  const selected=state.adminMonth||todayISO().slice(0,7); const m=financialMetrics(selected); const all=financialMetrics('');
+  const list=purchases.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')||(b.createdAt||'').localeCompare(a.createdAt||''));
+  return `<div class="admin-filter"><label>Periodo</label><input type="month" value="${selected}" onchange="state.adminMonth=this.value;renderApp()"></div>
+  <div class="finance-grid"><div class="report-stat"><div class="label">Inversión del mes</div><div class="value mono">${fmt(m.invested)}</div></div><div class="report-stat"><div class="label">Ventas del mes</div><div class="value mono">${fmt(m.sales)}</div></div><div class="report-stat"><div class="label">Resultado</div><div class="value mono ${m.profit<0?'text-danger':'text-ok'}">${fmt(m.profit)}</div></div><div class="report-stat"><div class="label">Margen</div><div class="value mono">${m.margin.toFixed(1)}%</div></div></div>
+  <div class="card"><div class="name">Acumulado general</div><div class="financial-line"><span>Inversión registrada</span><strong>${fmt(all.invested)}</strong></div><div class="financial-line"><span>Ventas registradas</span><strong>${fmt(all.sales)}</strong></div><div class="financial-line"><span>Ventas menos compras</span><strong class="${all.profit<0?'text-danger':'text-ok'}">${fmt(all.profit)}</strong></div><div class="hint">Este resultado es flujo simple: ventas menos compras del periodo. No sustituye la utilidad contable ni considera inventario inicial, gastos, impuestos o costo de lo vendido.</div></div>
+  <div class="btnrow"><button class="btn btn-primary" onclick="openModal('purchaseForm',{id:null})">+ Registrar compra</button><button class="btn btn-outline" onclick="exportPurchasesCSV()">Exportar compras</button></div>
+  <div class="section-title">Compras y documentos de proveedores</div>${list.length?list.map(p=>`<div class="card clickable" onclick="openModal('purchaseDetail',{id:'${p.id}'})"><div class="row-between"><div><div class="name">${esc(p.supplier||'Proveedor')}</div><div class="meta">${fmtDate(p.date)} · ${esc(p.invoiceNumber||p.noteNumber||'Sin folio')} · ${esc(p.material||'Compra')}</div></div><strong class="mono">${fmt(p.total)}</strong></div></div>`).join(''):`<div class="empty">Todavía no hay compras registradas.</div>`}`;
+}
+function modalPurchaseForm(){
+  if(!isAdmin()) return `<div class="empty">Acceso restringido.</div>`;
+  const id=state.modal.payload.id; const p=id?purchases.find(x=>x.id===id):null;
+  return `<div class="modal-title"><span>${p?'Editar compra':'Registrar compra'}</span><button onclick="closeModal()">✕</button></div>
+  <label>Fecha *</label><input id="pur-date" type="date" value="${p?.date||todayISO()}"><label>Proveedor *</label><input id="pur-supplier" value="${esc(p?.supplier||'')}"><label>Número de factura</label><input id="pur-invoice" value="${esc(p?.invoiceNumber||'')}"><label>Número de nota</label><input id="pur-note" value="${esc(p?.noteNumber||'')}"><label>Materia prima / concepto *</label><input id="pur-material" value="${esc(p?.material||'')}"><label>Cantidad</label><input id="pur-qty" type="number" min="0" step="any" value="${p?.quantity??1}" oninput="recalcPurchaseTotal()"><label>Costo unitario</label><input id="pur-unit" type="number" min="0" step="any" value="${p?.unitCost??0}" oninput="recalcPurchaseTotal()"><label>Total *</label><input id="pur-total" type="number" min="0" step="any" value="${p?.total??0}"><label>Observaciones</label><textarea id="pur-comments">${esc(p?.comments||'')}</textarea><label>Factura o nota (PDF/imagen, máximo 650 KB)</label><input id="pur-file" type="file" accept="application/pdf,image/*"><div class="hint">${p?.attachmentName?`Documento actual: ${esc(p.attachmentName)}`:'El documento se almacena con el registro.'}</div><div class="btnrow"><button class="btn btn-primary btn-block" onclick="submitPurchaseForm()">Guardar compra</button></div>`;
+}
+function recalcPurchaseTotal(){ const q=Number(document.getElementById('pur-qty')?.value)||0,u=Number(document.getElementById('pur-unit')?.value)||0,t=document.getElementById('pur-total'); if(t)t.value=(q*u).toFixed(2); }
+function readSmallFile(file){ return new Promise((resolve,reject)=>{ if(!file)return resolve(null); if(file.size>650*1024)return reject(new Error('El archivo supera 650 KB')); const r=new FileReader(); r.onload=()=>resolve({name:file.name,type:file.type,data:r.result}); r.onerror=()=>reject(new Error('No se pudo leer el archivo')); r.readAsDataURL(file); }); }
+async function submitPurchaseForm(){
+  const id=state.modal.payload.id; const existing=id?purchases.find(x=>x.id===id):null; const supplier=document.getElementById('pur-supplier').value.trim(),material=document.getElementById('pur-material').value.trim(),total=Number(document.getElementById('pur-total').value);
+  if(!supplier||!material||!total||total<0){showToast('Completa proveedor, concepto y total');return;}
+  try{ const f=document.getElementById('pur-file').files[0]; const attachment=await readSmallFile(f); const data={date:document.getElementById('pur-date').value||todayISO(),supplier,invoiceNumber:document.getElementById('pur-invoice').value.trim(),noteNumber:document.getElementById('pur-note').value.trim(),material,quantity:Number(document.getElementById('pur-qty').value)||0,unitCost:Number(document.getElementById('pur-unit').value)||0,total,comments:document.getElementById('pur-comments').value.trim(),attachmentName:attachment?.name||existing?.attachmentName||'',attachmentType:attachment?.type||existing?.attachmentType||'',attachmentData:attachment?.data||existing?.attachmentData||'',updatedAt:new Date().toISOString()}; if(existing)Object.assign(existing,data,actorFields('updated')); else purchases.push({id:uid(),...data,...actorFields('created')}); await savePurchases(); closeModal(); renderApp(); showToast('Compra guardada'); }catch(e){showToast(e.message||'No se pudo guardar');}
+}
+function modalPurchaseDetail(){ const p=purchases.find(x=>x.id===state.modal.payload.id); if(!p)return `<div class="empty">Compra no encontrada.</div>`; return `<div class="modal-title"><span>Detalle de compra</span><button onclick="closeModal()">✕</button></div><div class="card"><div class="name">${esc(p.supplier)}</div><div class="meta">${fmtDate(p.date)}</div><div class="financial-line"><span>Concepto</span><strong>${esc(p.material)}</strong></div><div class="financial-line"><span>Cantidad</span><strong>${p.quantity||0}</strong></div><div class="financial-line"><span>Costo unitario</span><strong>${fmt(p.unitCost)}</strong></div><div class="financial-line"><span>Total</span><strong>${fmt(p.total)}</strong></div><div class="financial-line"><span>Factura / nota</span><strong>${esc(p.invoiceNumber||p.noteNumber||'Sin folio')}</strong></div>${p.comments?`<div class="hint">${esc(p.comments)}</div>`:''}</div><div class="btnrow">${p.attachmentData?`<button class="btn btn-gold" onclick="openPurchaseAttachment('${p.id}')">Ver documento</button>`:''}<button class="btn btn-outline" onclick="openModal('purchaseForm',{id:'${p.id}'})">Editar</button><button class="btn btn-danger" onclick="deletePurchase('${p.id}')">Eliminar</button></div>`; }
+function openPurchaseAttachment(id){ const p=purchases.find(x=>x.id===id); if(!p?.attachmentData)return; const a=document.createElement('a');a.href=p.attachmentData;a.target='_blank';a.download=p.attachmentName||'documento';a.click(); }
+function deletePurchase(id){ if(!confirm('¿Eliminar esta compra?'))return; purchases=purchases.filter(p=>p.id!==id); savePurchases(); closeModal(); renderApp(); showToast('Compra eliminada'); }
+function exportPurchasesCSV(){ const csv=['Fecha,Proveedor,Factura,Nota,Concepto,Cantidad,Costo unitario,Total',...purchases.map(p=>[p.date,p.supplier,p.invoiceNumber,p.noteNumber,p.material,p.quantity,p.unitCost,p.total].map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(','))].join('\n'); downloadTextFile(`compras-${todayISO()}.csv`,csv,'text/csv;charset=utf-8'); }
 
 /* --- Adeudos tab --- */
 function renderAdeudosTab(){
@@ -1590,6 +1667,8 @@ function renderModal(){
   if(type==='usersManage') html = modalUsersManage();
   if(type==='visitFinish') html = modalVisitFinish();
   if(type==='visitPrompt') html = modalVisitPrompt();
+  if(type==='purchaseForm') html = modalPurchaseForm();
+  if(type==='purchaseDetail') html = modalPurchaseDetail();
   root.innerHTML = `<div class="modal-overlay" onclick="closeModal()"><div class="modal-sheet" onclick="event.stopPropagation()">${html}</div></div>`;
 }
 
@@ -2274,7 +2353,7 @@ window.addEventListener('salsamix-auth-change', async event=>{
   currentProfile = event.detail.profile;
   renderAuth();
   if(currentUser && currentProfile){
-    clients=[]; notes=[]; payments=[]; catalog=[]; inventoryMovements=[]; visits=[]; sellers=[];
+    clients=[]; notes=[]; payments=[]; catalog=[]; inventoryMovements=[]; visits=[]; purchases=[]; sellers=[];
     loaded = false;
     renderApp();
     await loadAll();
@@ -2282,7 +2361,7 @@ window.addEventListener('salsamix-auth-change', async event=>{
     renderApp();
   }else{
     loaded = false;
-    clients=[]; notes=[]; payments=[]; catalog=[]; inventoryMovements=[]; visits=[]; sellers=[]; syncState='idle';
+    clients=[]; notes=[]; payments=[]; catalog=[]; inventoryMovements=[]; visits=[]; purchases=[]; sellers=[]; syncState='idle';
     if(unsubscribeCloud){ unsubscribeCloud(); unsubscribeCloud=null; }
     if(unsubscribeUsers){ unsubscribeUsers(); unsubscribeUsers=null; }
   }

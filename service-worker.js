@@ -1,4 +1,4 @@
-const CACHE_NAME = 'salsamix-ticket-v99';
+const CACHE_NAME = 'salsamix-admin-v101';
 const APP_SHELL = [
   './',
   './index.html',

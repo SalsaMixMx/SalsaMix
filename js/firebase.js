@@ -40,7 +40,7 @@ const db = initializeFirestore(app, {
 });
 const auth = getAuth(app);
 
-const SECURE_COLLECTIONS = ["clients", "notes", "payments", "catalog", "inventoryMovements", "visits"];
+const SECURE_COLLECTIONS = ["clients", "notes", "payments", "catalog", "inventoryMovements", "visits", "purchases"];
 const LEGACY_COLLECTION = "salsamixData";
 
 function profileRef(uid){ return doc(db, "users", uid); }
@@ -57,6 +57,7 @@ function normalizeItem(item, name, clientsById, currentUid){
   }
   if(name==="visits") result.sellerId=result.sellerId || result.createdBy || currentUid;
   if(name==="inventoryMovements") result.sellerId=result.sellerId || result.createdBy || currentUid;
+  if(name==="purchases") result.sellerId=result.sellerId || result.createdBy || currentUid;
   return result;
 }
 

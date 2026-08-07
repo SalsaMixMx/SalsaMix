@@ -91,6 +91,11 @@ service cloud.firestore {
       allow update, delete: if admin();
     }
 
+
+    match /purchases/{purchaseId} {
+      allow read, create, update, delete: if admin();
+    }
+
     // La estructura antigua queda disponible únicamente para el administrador durante la migración.
     match /salsamixData/{document} {
       allow read, write: if admin();
